@@ -81,7 +81,13 @@ func (m ReviewManager) Reviews(ctx context.Context) ([]tradeplus.Review, error) 
 			}
 		}
 
-		nr.Answer = answer + offerByArticle(articleTextMap, nr.Article)
+		nr.Answer = answer
+
+		// offer article if valuation is more than 3
+		if nr.Valuation > 3 {
+			nr.Answer += offerByArticle(articleTextMap, nr.Article)
+		}
+
 		nr.CabinetID = m.cabinet.ID
 
 		_, err = m.repo.AddReview(ctx, nr.ToDB())
