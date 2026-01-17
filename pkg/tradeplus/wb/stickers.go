@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"time"
 
@@ -33,7 +34,7 @@ func NewStickerManager(token string) StickerManager {
 func (m StickerManager) GetReadyFile(supplyID string, progressChan chan tradeplus.Progress) ([]string, error) {
 	tradeplus.CreateDirectories()
 
-	orders, err := m.client.GetOrdersFbs(supplyID)
+	orders, err := m.orders(supplyID)
 	if err != nil {
 		return nil, err
 	}
@@ -97,6 +98,45 @@ func (m StickerManager) GetReadyFile(supplyID string, progressChan chan tradeplu
 	return resultFiles, nil
 }
 
+func (m StickerManager) orders(supplyID string) ([]wb.OrderFBS, error) {
+	var filteredOrders []wb.OrderFBS
+
+	ordersIDs, err := m.client.GetOrderIDsFbs(supplyID)
+	if err != nil {
+		return nil, err
+	}
+
+	dateFrom := int(wb.GetUnix(time.Now().AddDate(0, 0, -7)))
+	dateTo := int(wb.GetUnix(time.Now()))
+
+	allOrders, err := m.client.GetOrdersFBS(dateFrom, dateTo)
+	if err != nil {
+		return nil, err
+	}
+
+	// Создаем map для быстрого поиска заказов по ID
+	orderMap := make(map[int]wb.OrderFBS, len(allOrders.OrdersFBS))
+	for i := range allOrders.OrdersFBS {
+		orderMap[allOrders.OrdersFBS[i].ID] = allOrders.OrdersFBS[i]
+	}
+
+	// Отбираем только нужные заказы
+	for _, id := range ordersIDs.IDs {
+		if order, exists := orderMap[id]; exists {
+			filteredOrders = append(filteredOrders, order)
+		}
+	}
+	sortOrdersByArticle(filteredOrders)
+
+	return filteredOrders, nil
+}
+
+func sortOrdersByArticle(orders []wb.OrderFBS) {
+	sort.SliceStable(orders, func(i, j int) bool {
+		return orders[i].Article < orders[j].Article
+	})
+}
+
 func decodeToPNG(base64String string, orderID int) (string, error) {
 	base64Data := base64String
 
@@ -121,7 +161,7 @@ func decodeToPNG(base64String string, orderID int) (string, error) {
 	return filePath, nil
 }
 
-func decodeToPDF(base64String string, orderID int, order wb.OrderWB) error {
+func decodeToPDF(base64String string, orderID int, order wb.OrderFBS) error {
 	pageWidthMM := 75.0
 	pageHeightMM := 120.0
 	// Создание нового PDF-документа

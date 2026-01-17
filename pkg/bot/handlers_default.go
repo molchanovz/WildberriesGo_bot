@@ -27,27 +27,27 @@ const (
 )
 
 type Manager struct {
-	dbc       db.DB
-	sl        embedlog.Logger
-	b         *botlib.Bot
-	tm        *tradeplus.Manager
-	chatgpt   *chatgptsrv.Client
-	myChatID  int
-	SheetMap  *sync.Map
-	APIMap    *sync.Map
-	ReviewMap *sync.Map
+	dbc          db.DB
+	sl           embedlog.Logger
+	b            *botlib.Bot
+	tm           *tradeplus.Manager
+	chatgpt      *chatgptsrv.Client
+	reviewChatID int
+	SheetMap     *sync.Map
+	APIMap       *sync.Map
+	ReviewMap    *sync.Map
 }
 
 func NewManager(dbc db.DB, cfg Config, chatgpt *chatgptsrv.Client, logger embedlog.Logger) *Manager {
 	return &Manager{
-		dbc:       dbc,
-		tm:        tradeplus.NewManager(dbc),
-		chatgpt:   chatgpt,
-		myChatID:  cfg.MyChatID,
-		SheetMap:  new(sync.Map),
-		APIMap:    new(sync.Map),
-		ReviewMap: new(sync.Map),
-		sl:        logger,
+		dbc:          dbc,
+		tm:           tradeplus.NewManager(dbc),
+		chatgpt:      chatgpt,
+		reviewChatID: cfg.ReviewChatID,
+		SheetMap:     new(sync.Map),
+		APIMap:       new(sync.Map),
+		ReviewMap:    new(sync.Map),
+		sl:           logger,
 	}
 }
 
@@ -73,10 +73,12 @@ func (m *Manager) RegisterBotHandlers() {
 	m.b.RegisterHandler(botlib.HandlerTypeCallbackQueryData, CallbackOzonHandler, botlib.MatchTypeExact, m.ozonHandler)
 
 	m.b.RegisterHandler(botlib.HandlerTypeCallbackQueryData, CallbackWbFbsHandler, botlib.MatchTypeExact, m.stickersHandler)
+
 	m.b.RegisterHandler(botlib.HandlerTypeCallbackQueryData, CallbackWbAnswerReview, botlib.MatchTypePrefix, m.wbAnswerReview)
 	m.b.RegisterHandler(botlib.HandlerTypeCallbackQueryData, CallbackWbRegenReview, botlib.MatchTypePrefix, m.wbRegenReview)
 	m.b.RegisterHandler(botlib.HandlerTypeCallbackQueryData, CallbackWbEditReview, botlib.MatchTypePrefix, m.wbEditReview)
 	m.b.RegisterHandler(botlib.HandlerTypeCallbackQueryData, CallbackWbDeleteReview, botlib.MatchTypePrefix, m.wbDeleteReview)
+
 	m.b.RegisterHandler(botlib.HandlerTypeCallbackQueryData, CallbackYandexStickersHandler, botlib.MatchTypePrefix, m.yandexFbsHandler)
 	m.b.RegisterHandler(botlib.HandlerTypeCallbackQueryData, CallbackWbOrdersHandler, botlib.MatchTypePrefix, m.wbOrdersHandler)
 	m.b.RegisterHandler(botlib.HandlerTypeCallbackQueryData, CallbackYandexOrdersHandler, botlib.MatchTypePrefix, m.yandexOrdersHandler)
@@ -94,45 +96,44 @@ func (m *Manager) RegisterBotHandlers() {
 
 // DefaultHandler ловит сообщения без команд, проверяет статус пользователя, после обновляет статус на enabled
 func (m *Manager) DefaultHandler(ctx context.Context, bot *botlib.Bot, update *models.Update) {
-	chatID := update.Message.From.ID
+	chatUserID := update.Message.From.ID
+	chatID := update.Message.Chat.ID
 	message := update.Message.Text
 
-	user, err := m.tm.UserByChatID(ctx, chatID)
+	user, err := m.tm.UserByChatID(ctx, chatUserID)
 	if err != nil {
 		log.Println(err)
 		return
 	} else if user == nil {
-		log.Println("user not found", chatID)
+		log.Println("user not found", chatUserID)
 		return
 	}
 
 	switch user.StatusID {
 	case db.StatusEnabled:
 		{
-			_, err := SendTextMessage(ctx, bot, chatID, "Не понял тебя. Нажми /start еще раз")
-			if err != nil {
-				log.Println("ошибка отправки сообщения")
+			if chatUserID != chatID {
 				return
 			}
 		}
 	case db.StatusWaitingWbState:
 		{
-			err = m.getWbStickers(ctx, bot, chatID, message)
+			err = m.getWbStickers(ctx, bot, chatUserID, message)
 			if err != nil {
 				return
 			}
 		}
 	case db.StatusWaitingYaState:
 		{
-			m.getYandexFbs(ctx, bot, chatID, message)
+			m.getYandexFbs(ctx, bot, chatUserID, message)
 		}
 	case db.StatusWaitingAPI:
 		{
-			m.changeAPI(ctx, bot, chatID, update.Message)
+			m.changeAPI(ctx, bot, chatUserID, update.Message)
 		}
 	case db.StatusWaitingSheet:
 		{
-			m.changeSheet(ctx, bot, chatID, update.Message)
+			m.changeSheet(ctx, bot, chatUserID, update.Message)
 		}
 	case db.StatusWaitingReview:
 		{
@@ -179,6 +180,7 @@ func (m *Manager) startHandler(ctx context.Context, bot *botlib.Bot, update *mod
 
 	if update.Message != nil {
 		chatID = update.Message.From.ID
+		fmt.Println(update.Message.Chat.ID)
 	} else {
 		chatID = update.CallbackQuery.From.ID
 	}

@@ -11,8 +11,8 @@ import (
 )
 
 type Config struct {
-	Token    string
-	MyChatID int
+	Token        string
+	ReviewChatID int
 }
 
 type Service struct {

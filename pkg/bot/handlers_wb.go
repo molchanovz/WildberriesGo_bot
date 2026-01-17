@@ -289,7 +289,7 @@ func (m *Manager) sendReview(ctx context.Context, review tradeplus.Review) error
 
 	markup := models.InlineKeyboardMarkup{InlineKeyboard: allButtons}
 
-	_, err := m.b.SendMessage(ctx, &botlib.SendMessageParams{ChatID: int64(m.myChatID), Text: text, ReplyMarkup: markup, ParseMode: models.ParseModeHTML})
+	_, err := m.b.SendMessage(ctx, &botlib.SendMessageParams{ChatID: int64(m.reviewChatID), Text: text, ReplyMarkup: markup, ParseMode: models.ParseModeHTML})
 	if err != nil {
 		return fmt.Errorf("review#%w send failed: %w", review.ID, err)
 	}
@@ -376,7 +376,8 @@ func (m *Manager) wbRegenReview(ctx context.Context, bot *botlib.Bot, update *mo
 }
 
 func (m *Manager) wbEditReview(ctx context.Context, bot *botlib.Bot, update *models.Update) {
-	chatID := update.CallbackQuery.From.ID
+	chatUserID := update.CallbackQuery.From.ID
+	chatID := update.CallbackQuery.Message.Message.Chat.ID
 
 	parts := strings.Split(update.CallbackQuery.Data, "_")
 
@@ -389,7 +390,7 @@ func (m *Manager) wbEditReview(ctx context.Context, bot *botlib.Bot, update *mod
 
 	m.ReviewMap.Store(chatID, reviewId)
 
-	user, err := m.tm.UserByChatID(ctx, chatID)
+	user, err := m.tm.UserByChatID(ctx, chatUserID)
 	if err != nil {
 		log.Println("Ошибка получения User")
 		return
@@ -530,7 +531,7 @@ func (m *Manager) AnalyzeStocks(apiKey string, ctx context.Context, b *botlib.Bo
 	//	if newStocks.stockFBO == 0 && *stocks[0].CountFbo != 0 {
 	//		// Отправляем уведомление
 	//		_, err = b.SendMessage(ctx, &botlib.SendMessageParams{
-	//			ChatID:    m.myChatID,
+	//			ChatID:    m.reviewChatID,
 	//			Text:      fmt.Sprintf("На складе <b>WB</b> закончились <code>%v</code>. Проверьте FBS", article),
 	//			ParseMode: models.ParseModeHTML,
 	//		})

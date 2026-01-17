@@ -87,7 +87,7 @@ func (c Client) stocksFbo() (string, error) {
 }
 
 func (c Client) getOrdersBySupplyID(supplyID string) (string, error) {
-	baseURL := "https://marketplace-api.wildberries.ru/api/v3/supplies/" + supplyID + "/orders"
+	baseURL := "https://marketplace-api.wildberries.ru/api/marketplace/v3/supplies/" + supplyID + "/order-ids"
 	body := []byte(``)
 
 	headers := map[string]string{
@@ -166,8 +166,8 @@ func (c Client) getCodesByOrderID(orderID int) (string, error) {
 	return response, nil
 }
 
-// Получения фбс заказов
-func (c Client) ordersFBS(daysAgo int) (string, error) {
+// GetOrdersFBS отдает фбс заказы
+func (c Client) GetOrdersFBS(dateFrom, dateTo int) (*OrdersListFBS, error) {
 	baseURL := "https://marketplace-api.wildberries.ru/api/v3/orders"
 	body := []byte(``)
 
@@ -178,16 +178,18 @@ func (c Client) ordersFBS(daysAgo int) (string, error) {
 	params := map[string]string{
 		"limit":    "1000",
 		"next":     "0",
-		"dateFrom": strconv.Itoa(int(getUnix(time.Now().AddDate(0, 0, -(daysAgo + 1))))),
-		"dateTo":   strconv.Itoa(int(getUnix(time.Now().AddDate(0, 0, -daysAgo)))),
+		"dateFrom": strconv.Itoa(dateFrom),
+		"dateTo":   strconv.Itoa(dateTo),
 	}
 
 	_, response, err := c.get(baseURL, headers, params, body)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	return response, nil
+	var posting OrdersListFBS
+	err = json.Unmarshal([]byte(response), &posting)
+	return &posting, err
 }
 
 func (c Client) ordersFBSStatus(orderID int) (string, error) {
@@ -381,13 +383,13 @@ func (c Client) AnswerReview(id, answer string) error {
 	}
 
 	if status != http.StatusNoContent {
-		return fmt.Errorf("status not OK: %s", status)
+		return fmt.Errorf("status not OK: %d", status)
 	}
 
 	return nil
 }
 
-func getUnix(date time.Time) int64 {
+func GetUnix(date time.Time) int64 {
 	nowStr := fmt.Sprint(date.Format("2006-01-02"), "T21:00:00")
 	t, _ := time.Parse("2006-01-02T15:04:05", nowStr)
 	return t.Unix()

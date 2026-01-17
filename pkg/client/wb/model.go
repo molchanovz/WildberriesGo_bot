@@ -25,6 +25,10 @@ type Orders struct {
 	Orders []OrderWB `json:"orders"`
 }
 
+type OrderIDs struct {
+	IDs []int `json:"orderIds"`
+}
+
 type StickerWB struct {
 	Stickers []struct {
 		OrderID int    `json:"orderId"`
@@ -65,42 +69,44 @@ type OrdersListALL []struct {
 	SrID            string  `json:"srid"`
 }
 
+type OrderFBS struct {
+	Address struct {
+		FullAddress string  `json:"fullAddress"`
+		Province    string  `json:"province"`
+		Area        string  `json:"area"`
+		City        string  `json:"city"`
+		Street      string  `json:"street"`
+		Home        string  `json:"home"`
+		Flat        string  `json:"flat"`
+		Entrance    string  `json:"entrance"`
+		Longitude   float64 `json:"longitude"`
+		Latitude    float64 `json:"latitude"`
+	} `json:"address"`
+	ScanPrice             float64   `json:"scanPrice"`
+	DeliveryType          string    `json:"deliveryType"`
+	SupplyID              string    `json:"supplyId"`
+	OrderUID              string    `json:"orderUid"`
+	Article               string    `json:"article"`
+	ColorCode             string    `json:"colorCode"`
+	RID                   string    `json:"rid"`
+	CreatedAt             time.Time `json:"createdAt"`
+	Offices               []string  `json:"offices"`
+	Skus                  []string  `json:"skus"`
+	ID                    int       `json:"id"`
+	WarehouseID           int       `json:"warehouseId"`
+	NmID                  int       `json:"nmId"`
+	ChrtID                int       `json:"chrtId"`
+	Price                 float64   `json:"price"`
+	ConvertedPrice        float64   `json:"convertedPrice"`
+	CurrencyCode          int       `json:"currencyCode"`
+	ConvertedCurrencyCode int       `json:"convertedCurrencyCode"`
+	CargoType             int       `json:"cargoType"`
+	IsZeroOrder           bool      `json:"isZeroOrder"`
+}
+
 type OrdersListFBS struct {
-	Next      int `json:"next"`
-	OrdersFBS []struct {
-		Address struct {
-			FullAddress string  `json:"fullAddress"`
-			Province    string  `json:"province"`
-			Area        string  `json:"area"`
-			City        string  `json:"city"`
-			Street      string  `json:"street"`
-			Home        string  `json:"home"`
-			Flat        string  `json:"flat"`
-			Entrance    string  `json:"entrance"`
-			Longitude   float64 `json:"longitude"`
-			Latitude    float64 `json:"latitude"`
-		} `json:"address"`
-		ScanPrice             float64   `json:"scanPrice"`
-		DeliveryType          string    `json:"deliveryType"`
-		SupplyID              string    `json:"supplyId"`
-		OrderUID              string    `json:"orderUid"`
-		Article               string    `json:"article"`
-		ColorCode             string    `json:"colorCode"`
-		RID                   string    `json:"rid"`
-		CreatedAt             time.Time `json:"createdAt"`
-		Offices               []string  `json:"offices"`
-		Skus                  []string  `json:"skus"`
-		ID                    int       `json:"id"`
-		WarehouseID           int       `json:"warehouseId"`
-		NmID                  int       `json:"nmId"`
-		ChrtID                int       `json:"chrtId"`
-		Price                 float64   `json:"price"`
-		ConvertedPrice        float64   `json:"convertedPrice"`
-		CurrencyCode          int       `json:"currencyCode"`
-		ConvertedCurrencyCode int       `json:"convertedCurrencyCode"`
-		CargoType             int       `json:"cargoType"`
-		IsZeroOrder           bool      `json:"isZeroOrder"`
-	} `json:"orders"`
+	Next      int        `json:"next"`
+	OrdersFBS []OrderFBS `json:"orders"`
 }
 
 type SalesReturns []struct {
