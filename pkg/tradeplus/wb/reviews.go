@@ -2,7 +2,9 @@ package wb
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
 	"tradebot/pkg/client/chatgptsrv"
 	"tradebot/pkg/client/wb"
 	"tradebot/pkg/db"
@@ -21,6 +23,8 @@ const Prompt = `
 6. Запрещено указывать или описывать товар, если покупатель сам его не назвал.
 7. Всегда пиши с заглавной буквы
 `
+
+const ArticlesPath = "assets/articles.json"
 
 type ReviewManager struct {
 	dbc     db.DB
@@ -57,6 +61,13 @@ func (m ReviewManager) Reviews(ctx context.Context) ([]tradeplus.Review, error) 
 
 	externalIDx := tradeplus.NewReviews(existsReviews).IndexByExternalID()
 
+	var articleTextMap map[string]string
+
+	err = loadArticles(&articleTextMap)
+	if err != nil {
+		return nil, err
+	}
+
 	for _, nr := range unansweredReviews {
 		if _, ok := externalIDx[nr.ExternalID]; ok {
 			continue
@@ -70,7 +81,7 @@ func (m ReviewManager) Reviews(ctx context.Context) ([]tradeplus.Review, error) 
 			}
 		}
 
-		nr.Answer = answer
+		nr.Answer = answer + offerByArticle(articleTextMap, nr.Article)
 		nr.CabinetID = m.cabinet.ID
 
 		_, err = m.repo.AddReview(ctx, nr.ToDB())
@@ -82,6 +93,22 @@ func (m ReviewManager) Reviews(ctx context.Context) ([]tradeplus.Review, error) 
 	}
 
 	return newReviews, nil
+}
+
+func offerByArticle(m map[string]string, article string) string {
+	if v, ok := m[article]; ok {
+		return " " + v
+	}
+	return ""
+}
+
+func loadArticles(m *map[string]string) error {
+	data, err := os.ReadFile(ArticlesPath)
+	if err != nil {
+		return err
+	}
+
+	return json.Unmarshal(data, &m)
 }
 
 func (m ReviewManager) AnswerReview(ctx context.Context, reviewId string) error {
