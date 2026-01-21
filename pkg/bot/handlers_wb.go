@@ -27,7 +27,6 @@ const (
 	CallbackWbReturnsHandler = "WB-RETURNS"
 
 	CallbackWbAnswerReview = "WB-ANSWER-REVIEW"
-	CallbackWbRegenReview  = "WB-REGEN-REVIEW"
 	CallbackWbEditReview   = "WB-EDIT-REVIEW"
 	CallbackWbDeleteReview = "WB-DELETE-REVIEW"
 )
@@ -280,10 +279,6 @@ func (m *Manager) sendReview(ctx context.Context, review tradeplus.Review) error
 	allButtons = append(allButtons, buttonsRow)
 	buttonsRow = []models.InlineKeyboardButton{}
 
-	buttonsRow = append(buttonsRow, models.InlineKeyboardButton{Text: "Перегенерировать ответ", CallbackData: fmt.Sprintf("%v_%v", CallbackWbRegenReview, reviewID)})
-	allButtons = append(allButtons, buttonsRow)
-	buttonsRow = []models.InlineKeyboardButton{}
-
 	buttonsRow = append(buttonsRow, models.InlineKeyboardButton{Text: "Удалить", CallbackData: CallbackWbDeleteReview})
 	allButtons = append(allButtons, buttonsRow)
 
@@ -321,58 +316,6 @@ func (m *Manager) wbAnswerReview(ctx context.Context, bot *botlib.Bot, update *m
 	}
 
 	m.wbDeleteReview(ctx, bot, update)
-}
-
-func (m *Manager) wbRegenReview(ctx context.Context, bot *botlib.Bot, update *models.Update) {
-	parts := strings.Split(update.CallbackQuery.Data, "_")
-	chatID := update.CallbackQuery.Message.Message.Chat.ID
-	message := update.CallbackQuery.Message.Message
-
-	if len(parts) != 2 {
-		m.sl.Error(ctx, "wbAnswerReview неверное кол-во parts")
-		return
-	}
-
-	reviewId := parts[1]
-
-	review, err := m.tm.GetReviewByID(ctx, reviewId)
-	if err != nil {
-		return
-	}
-
-	request := wb.Prompt + review.ToPrompt()
-	answer, err := m.chatgpt.Chatgpt.Send(ctx, request)
-	if err != nil {
-		log.Println("Ошибка получения нового ответа на отзыв")
-		return
-	}
-
-	review, err = m.tm.UpdateReviewAnswer(ctx, review, answer)
-	if err != nil {
-		log.Println("Ошибка обновления ответа")
-		return
-	}
-
-	_, err = bot.DeleteMessage(ctx, &botlib.DeleteMessageParams{
-		ChatID:    chatID,
-		MessageID: message.ID,
-	})
-	if err != nil {
-		log.Println("Ошибка удаления сообщения с API: ", err)
-		return
-	}
-
-	if review == nil {
-		m.sl.Error(ctx, "review is null")
-		return
-	}
-
-	fmt.Println("новый ответ: ", review.Answer)
-
-	err = m.sendReview(ctx, *review)
-	if err != nil {
-		return
-	}
 }
 
 func (m *Manager) wbEditReview(ctx context.Context, bot *botlib.Bot, update *models.Update) {
@@ -442,7 +385,7 @@ func (m *Manager) updateReview(ctx context.Context, bot *botlib.Bot, chatID int6
 		if err != nil {
 			return
 		}
-		review, err = m.tm.UpdateReviewAnswer(ctx, review, message.Text)
+		review, err = m.tm.UpdateReview(ctx, review)
 		if err != nil {
 			log.Println("Ошибка получения кабинета")
 			return

@@ -5,16 +5,6 @@ import (
 	"os"
 )
 
-// const (
-//	DirectoryPath = "/app/pkg/fbsPrinter/"
-//	CodesPath     = DirectoryPath + "codes/"
-//	ReadyPath     = DirectoryPath + "ready/"
-//	GeneratedPath = DirectoryPath + "generated/"
-//	BatchesPath   = DirectoryPath + "batches/"
-//	BarcodesPath  = "/assets/barcodes/"
-//	FontPath      = "/assets/font.ttf"
-// )
-
 const (
 	DirectoryPath = "pkg/tradeplus/printer/"
 	CodesPath     = DirectoryPath + "codes/"

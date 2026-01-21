@@ -75,7 +75,6 @@ func (m *Manager) RegisterBotHandlers() {
 	m.b.RegisterHandler(botlib.HandlerTypeCallbackQueryData, CallbackWbFbsHandler, botlib.MatchTypeExact, m.stickersHandler)
 
 	m.b.RegisterHandler(botlib.HandlerTypeCallbackQueryData, CallbackWbAnswerReview, botlib.MatchTypePrefix, m.wbAnswerReview)
-	m.b.RegisterHandler(botlib.HandlerTypeCallbackQueryData, CallbackWbRegenReview, botlib.MatchTypePrefix, m.wbRegenReview)
 	m.b.RegisterHandler(botlib.HandlerTypeCallbackQueryData, CallbackWbEditReview, botlib.MatchTypePrefix, m.wbEditReview)
 	m.b.RegisterHandler(botlib.HandlerTypeCallbackQueryData, CallbackWbDeleteReview, botlib.MatchTypePrefix, m.wbDeleteReview)
 
