@@ -55,9 +55,9 @@ db:
 	@psql -f docs/tradebot.sql tradebot
 	@psql -f docs/init.sql tradebot
 
-NS := ""
+NS := "tradebot"
 
-MAPPING := "tradebot:cabinets,orders,stocks,users,reviews"
+MAPPING := "tradebot:cabinets,orders,stocks,users,reviews,products"
 
 mfd-xml:
 	@mfd-generator xml -c "postgres://sergey:1719@localhost:5432/tradebot?sslmode=disable" -m ./docs/model/tradebot.mfd -n $(MAPPING)

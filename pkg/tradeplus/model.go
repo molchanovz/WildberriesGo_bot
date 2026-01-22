@@ -6,6 +6,25 @@ type Authorization struct {
 	ClientID, Token, Type string
 }
 
+//go:generate colgen
+
+type Product struct {
+	db.Product
+	Cabinet         *Cabinet
+	Recommendations Products
+}
+
+func NewProduct(in *db.Product) *Product {
+	if in == nil {
+		return nil
+	}
+
+	return &Product{
+		Product: *in,
+		Cabinet: NewCabinet(in.Cabinet),
+	}
+}
+
 type Cabinet struct {
 	db.Cabinet
 }

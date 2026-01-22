@@ -435,3 +435,75 @@ func (rs *ReviewSearch) Q() applier {
 		return rs.Apply(query), nil
 	}
 }
+
+type ProductSearch struct {
+	search
+
+	ID               *int
+	CabinetID        *int
+	Article          *string
+	Title            *string
+	ExternalID       *string
+	Description      *string
+	StatusID         *int
+	IDs              []int
+	ArticleILike     *string
+	TitleILike       *string
+	ExternalIDILike  *string
+	DescriptionILike *string
+}
+
+func (ps *ProductSearch) Apply(query *orm.Query) *orm.Query {
+	if ps == nil {
+		return query
+	}
+	if ps.ID != nil {
+		ps.where(query, Tables.Product.Alias, Columns.Product.ID, ps.ID)
+	}
+	if ps.CabinetID != nil {
+		ps.where(query, Tables.Product.Alias, Columns.Product.CabinetID, ps.CabinetID)
+	}
+	if ps.Article != nil {
+		ps.where(query, Tables.Product.Alias, Columns.Product.Article, ps.Article)
+	}
+	if ps.Title != nil {
+		ps.where(query, Tables.Product.Alias, Columns.Product.Title, ps.Title)
+	}
+	if ps.ExternalID != nil {
+		ps.where(query, Tables.Product.Alias, Columns.Product.ExternalID, ps.ExternalID)
+	}
+	if ps.Description != nil {
+		ps.where(query, Tables.Product.Alias, Columns.Product.Description, ps.Description)
+	}
+	if ps.StatusID != nil {
+		ps.where(query, Tables.Product.Alias, Columns.Product.StatusID, ps.StatusID)
+	}
+	if len(ps.IDs) > 0 {
+		Filter{Columns.Product.ID, ps.IDs, SearchTypeArray, false}.Apply(query)
+	}
+	if ps.ArticleILike != nil {
+		Filter{Columns.Product.Article, *ps.ArticleILike, SearchTypeILike, false}.Apply(query)
+	}
+	if ps.TitleILike != nil {
+		Filter{Columns.Product.Title, *ps.TitleILike, SearchTypeILike, false}.Apply(query)
+	}
+	if ps.ExternalIDILike != nil {
+		Filter{Columns.Product.ExternalID, *ps.ExternalIDILike, SearchTypeILike, false}.Apply(query)
+	}
+	if ps.DescriptionILike != nil {
+		Filter{Columns.Product.Description, *ps.DescriptionILike, SearchTypeILike, false}.Apply(query)
+	}
+
+	ps.apply(query)
+
+	return query
+}
+
+func (ps *ProductSearch) Q() applier {
+	return func(query *orm.Query) (*orm.Query, error) {
+		if ps == nil {
+			return query, nil
+		}
+		return ps.Apply(query), nil
+	}
+}

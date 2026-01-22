@@ -99,3 +99,25 @@ func (r Review) Validate() (errors map[string]string, valid bool) {
 
 	return errors, len(errors) == 0
 }
+
+func (p Product) Validate() (errors map[string]string, valid bool) {
+	errors = map[string]string{}
+
+	if utf8.RuneCountInString(p.Article) > 128 {
+		errors[Columns.Product.Article] = ErrMaxLength
+	}
+
+	if utf8.RuneCountInString(p.Title) > 128 {
+		errors[Columns.Product.Title] = ErrMaxLength
+	}
+
+	if utf8.RuneCountInString(p.ExternalID) > 128 {
+		errors[Columns.Product.ExternalID] = ErrMaxLength
+	}
+
+	if p.RecommendationIDs == nil {
+		errors[Columns.Product.RecommendationIDs] = ErrEmptyValue
+	}
+
+	return errors, len(errors) == 0
+}

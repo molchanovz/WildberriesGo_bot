@@ -24,8 +24,13 @@ func NewReview(in *db.Review) *Review {
 }
 
 type ArticleInfo struct {
-	Description    string `json:"description"`
-	Recommendation string `json:"recommendation"`
+	Description    string           `json:"description"`
+	Recommendation []Recommendation `json:"recommendation"`
+}
+
+type Recommendation struct {
+	Title   string `json:"title"`
+	Article string `json:"article"`
 }
 
 func (r Review) Stars() string {

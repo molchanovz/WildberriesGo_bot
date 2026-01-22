@@ -22,8 +22,9 @@ func NewTradebotRepo(db orm.DB) TradebotRepo {
 		filters: map[string][]Filter{
 			Tables.Cabinet.Name: {StatusFilter},
 			Tables.Order.Name:   {StatusFilter},
-			Tables.User.Name:    {StatusUserFilter},
+			Tables.User.Name:    {StatusFilter},
 			Tables.Review.Name:  {StatusFilter},
+			Tables.Product.Name: {StatusFilter},
 		},
 		sort: map[string][]SortField{
 			Tables.Cabinet.Name: {{Column: Columns.Cabinet.ID, Direction: SortDesc}},
@@ -31,6 +32,7 @@ func NewTradebotRepo(db orm.DB) TradebotRepo {
 			Tables.Stock.Name:   {{Column: Columns.Stock.ID, Direction: SortDesc}},
 			Tables.User.Name:    {{Column: Columns.User.CreatedAt, Direction: SortDesc}},
 			Tables.Review.Name:  {{Column: Columns.Review.CreatedAt, Direction: SortDesc}},
+			Tables.Product.Name: {{Column: Columns.Product.Title, Direction: SortAsc}},
 		},
 		join: map[string][]string{
 			Tables.Cabinet.Name: {TableColumns},
@@ -38,6 +40,7 @@ func NewTradebotRepo(db orm.DB) TradebotRepo {
 			Tables.Stock.Name:   {TableColumns, Columns.Stock.Cabinet},
 			Tables.User.Name:    {TableColumns},
 			Tables.Review.Name:  {TableColumns, Columns.Review.Cabinet},
+			Tables.Product.Name: {TableColumns, Columns.Product.Cabinet},
 		},
 	}
 }
@@ -438,4 +441,77 @@ func (tr TradebotRepo) DeleteReview(ctx context.Context, id int) (deleted bool, 
 	review := &Review{ID: id, StatusID: StatusDeleted}
 
 	return tr.UpdateReview(ctx, review, WithColumns(Columns.Review.StatusID))
+}
+
+/*** Product ***/
+
+// FullProduct returns full joins with all columns
+func (tr TradebotRepo) FullProduct() OpFunc {
+	return WithColumns(tr.join[Tables.Product.Name]...)
+}
+
+// DefaultProductSort returns default sort.
+func (tr TradebotRepo) DefaultProductSort() OpFunc {
+	return WithSort(tr.sort[Tables.Product.Name]...)
+}
+
+// ProductByID is a function that returns Product by ID(s) or nil.
+func (tr TradebotRepo) ProductByID(ctx context.Context, id int, ops ...OpFunc) (*Product, error) {
+	return tr.OneProduct(ctx, &ProductSearch{ID: &id}, ops...)
+}
+
+// OneProduct is a function that returns one Product by filters. It could return pg.ErrMultiRows.
+func (tr TradebotRepo) OneProduct(ctx context.Context, search *ProductSearch, ops ...OpFunc) (*Product, error) {
+	obj := &Product{}
+	err := buildQuery(ctx, tr.db, obj, search, tr.filters[Tables.Product.Name], PagerTwo, ops...).Select()
+
+	if errors.Is(err, pg.ErrMultiRows) {
+		return nil, err
+	} else if errors.Is(err, pg.ErrNoRows) {
+		return nil, nil
+	}
+
+	return obj, err
+}
+
+// ProductsByFilters returns Product list.
+func (tr TradebotRepo) ProductsByFilters(ctx context.Context, search *ProductSearch, pager Pager, ops ...OpFunc) (products []Product, err error) {
+	err = buildQuery(ctx, tr.db, &products, search, tr.filters[Tables.Product.Name], pager, ops...).Select()
+	return
+}
+
+// CountProducts returns count
+func (tr TradebotRepo) CountProducts(ctx context.Context, search *ProductSearch, ops ...OpFunc) (int, error) {
+	return buildQuery(ctx, tr.db, &Product{}, search, tr.filters[Tables.Product.Name], PagerOne, ops...).Count()
+}
+
+// AddProduct adds Product to DB.
+func (tr TradebotRepo) AddProduct(ctx context.Context, product *Product, ops ...OpFunc) (*Product, error) {
+	q := tr.db.ModelContext(ctx, product)
+	applyOps(q, ops...)
+	_, err := q.Insert()
+
+	return product, err
+}
+
+// UpdateProduct updates Product in DB.
+func (tr TradebotRepo) UpdateProduct(ctx context.Context, product *Product, ops ...OpFunc) (bool, error) {
+	q := tr.db.ModelContext(ctx, product).WherePK()
+	if len(ops) == 0 {
+		q = q.ExcludeColumn(Columns.Product.ID)
+	}
+	applyOps(q, ops...)
+	res, err := q.Update()
+	if err != nil {
+		return false, err
+	}
+
+	return res.RowsAffected() > 0, err
+}
+
+// DeleteProduct set statusId to deleted in DB.
+func (tr TradebotRepo) DeleteProduct(ctx context.Context, id int) (deleted bool, err error) {
+	product := &Product{ID: id, StatusID: StatusDeleted}
+
+	return tr.UpdateProduct(ctx, product, WithColumns(Columns.Product.StatusID))
 }

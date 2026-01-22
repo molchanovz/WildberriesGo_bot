@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math/rand"
 	"os"
 	"tradebot/pkg/client/chatgptsrv"
 	"tradebot/pkg/client/wb"
@@ -156,7 +158,11 @@ const Prompt = `
 
 `
 
-const ArticlesPath = "assets/articles.json"
+const (
+	ArticlesPath       = "assets/articles.json"
+	Recommendation     = "Рекомендуем к покупке %s нашего производства, артикул %s. Вставьте его в поисковую строку маркетплейса."
+	NullRecommendation = "Рекомендуем к покупке другие товары нашего производства, их вы найдете в нашем магазине."
+)
 
 type ReviewManager struct {
 	dbc     db.DB
@@ -193,35 +199,45 @@ func (m ReviewManager) Reviews(ctx context.Context) ([]tradeplus.Review, error) 
 
 	externalIDx := tradeplus.NewReviews(existsReviews).IndexByExternalID()
 
-	articlesInfo, err := LoadArticlesInfo()
+	products, err := m.repo.ProductsByFilters(ctx, &db.ProductSearch{CabinetID: &m.cabinet.ID}, db.PagerNoLimit)
 	if err != nil {
 		return nil, err
 	}
+
+	newProducts := tradeplus.NewProducts(products)
+
+	newProducts.SetRecommendations(newProducts.Index())
+
+	productIdx := newProducts.IndexByArticle()
 
 	for _, nr := range unansweredReviews {
 		if _, ok := externalIDx[nr.ExternalID]; ok {
 			continue
 		}
-		err = m.SetAnswer(ctx, &nr, articlesInfo)
-		if err != nil {
-			return nil, err
+
+		if v, ok := productIdx[nr.Article]; ok {
+			err = m.SetAnswer(ctx, &nr, v)
+			if err != nil {
+				return nil, err
+			}
+
+			nr.CabinetID = m.cabinet.ID
+
+			_, err = m.repo.AddReview(ctx, nr.ToDB())
+			if err != nil {
+				return nil, err
+			}
+
+			newReviews = append(newReviews, nr)
 		}
 
-		nr.CabinetID = m.cabinet.ID
-
-		_, err = m.repo.AddReview(ctx, nr.ToDB())
-		if err != nil {
-			return nil, err
-		}
-
-		newReviews = append(newReviews, nr)
 	}
 
 	return newReviews, nil
 }
 
-func (m ReviewManager) SetAnswer(ctx context.Context, nr *tradeplus.Review, articlesInfo map[string]tradeplus.ArticleInfo) error {
-	request := Prompt + nr.ToPrompt(tradeplus.Ptr(articlesInfo[nr.Article].Description))
+func (m ReviewManager) SetAnswer(ctx context.Context, nr *tradeplus.Review, product tradeplus.Product) error {
+	request := Prompt + nr.ToPrompt(product.Description)
 	answer, err := m.chatgpt.Chatgpt.Send(ctx, request)
 	if err != nil {
 		return err
@@ -230,7 +246,7 @@ func (m ReviewManager) SetAnswer(ctx context.Context, nr *tradeplus.Review, arti
 
 	// offer article if valuation is more than 3
 	if nr.Valuation > 3 {
-		nr.Answer += offerByArticle(articlesInfo, nr.Article)
+		nr.Answer += offerByArticle(product)
 	}
 	return nil
 }
@@ -251,11 +267,19 @@ func LoadArticlesInfo() (map[string]tradeplus.ArticleInfo, error) {
 	return articlesInfo, nil
 }
 
-func offerByArticle(m map[string]tradeplus.ArticleInfo, article string) string {
-	if v, ok := m[article]; ok {
-		return " " + v.Recommendation
+func offerByArticle(product tradeplus.Product) string {
+
+	var rc = len(product.Recommendations)
+	if rc != 0 {
+		r := product.Recommendations[rand.Intn(rc)]
+		return " " + createRecommendation(r.Title, r.ExternalID)
 	}
-	return ""
+
+	return NullRecommendation
+}
+
+func createRecommendation(title, article string) string {
+	return fmt.Sprintf(Recommendation, title, article)
 }
 
 func (m ReviewManager) AnswerReview(ctx context.Context, reviewId string) error {
