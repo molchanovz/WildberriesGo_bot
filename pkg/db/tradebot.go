@@ -22,7 +22,7 @@ func NewTradebotRepo(db orm.DB) TradebotRepo {
 		filters: map[string][]Filter{
 			Tables.Cabinet.Name: {StatusFilter},
 			Tables.Order.Name:   {StatusFilter},
-			Tables.User.Name:    {StatusFilter},
+			Tables.User.Name:    {StatusUserFilter},
 			Tables.Review.Name:  {StatusFilter},
 			Tables.Product.Name: {StatusFilter},
 		},
