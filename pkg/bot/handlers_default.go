@@ -95,6 +95,10 @@ func (m *Manager) RegisterBotHandlers() {
 
 // DefaultHandler ловит сообщения без команд, проверяет статус пользователя, после обновляет статус на enabled
 func (m *Manager) DefaultHandler(ctx context.Context, bot *botlib.Bot, update *models.Update) {
+	if update.Message == nil {
+		return
+	}
+
 	chatUserID := update.Message.From.ID
 	chatID := update.Message.Chat.ID
 	message := update.Message.Text
@@ -104,6 +108,12 @@ func (m *Manager) DefaultHandler(ctx context.Context, bot *botlib.Bot, update *m
 		log.Println(err)
 		return
 	} else if user == nil {
+		text := fmt.Sprintf("Привет, я тебя не знаю. Нажми /start, чтобы я добавил тебя в базу!")
+		_, err = bot.SendMessage(ctx, &botlib.SendMessageParams{ChatID: chatUserID, Text: text})
+		if err != nil {
+			log.Printf("ошибка отправки сообщения %v", err)
+			return
+		}
 		log.Println("user not found", chatUserID)
 		return
 	}
@@ -208,7 +218,7 @@ func (m *Manager) startHandler(ctx context.Context, bot *botlib.Bot, update *mod
 
 	user, err := m.tm.CreateUser(ctx, chatID)
 	if err != nil {
-		log.Println("Ошибка создания меню: ", err)
+		log.Println("Ошибка создания пользователя: ", err)
 		return
 	}
 

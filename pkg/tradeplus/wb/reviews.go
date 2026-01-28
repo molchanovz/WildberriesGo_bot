@@ -206,6 +206,8 @@ func (m ReviewManager) Reviews(ctx context.Context) ([]tradeplus.Review, error) 
 
 	newProducts := tradeplus.NewProducts(products)
 
+	// TODO get stocks and set recommendations
+
 	newProducts.SetRecommendations(newProducts.Index())
 
 	productIdx := newProducts.IndexByArticle()
@@ -246,7 +248,7 @@ func (m ReviewManager) SetAnswer(ctx context.Context, nr *tradeplus.Review, prod
 
 	// offer article if valuation is more than 3
 	if nr.Valuation > 3 {
-		nr.Answer += offerByArticle(product)
+		nr.Answer += m.offerByArticle(product)
 	}
 	return nil
 }
@@ -267,8 +269,7 @@ func LoadArticlesInfo() (map[string]tradeplus.ArticleInfo, error) {
 	return articlesInfo, nil
 }
 
-func offerByArticle(product tradeplus.Product) string {
-
+func (m ReviewManager) offerByArticle(product tradeplus.Product) string {
 	var rc = len(product.Recommendations)
 	if rc != 0 {
 		r := product.Recommendations[rand.Intn(rc)]
