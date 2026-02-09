@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/vmkteam/embedlog"
 	"log"
+	"time"
 	"tradebot/pkg/client/chatgptsrv"
 	"tradebot/pkg/db"
 
@@ -32,7 +33,7 @@ func (s *Service) Manager() *Manager {
 }
 
 func (s *Service) Start() {
-	opts := []botlib.Option{botlib.WithDefaultHandler(s.manager.DefaultHandler)}
+	opts := []botlib.Option{botlib.WithDefaultHandler(s.manager.DefaultHandler), botlib.WithCheckInitTimeout(15 * time.Second)}
 	newBot, err := botlib.New(s.cfg.Token, opts...)
 	if err != nil {
 		log.Printf("ошибка запуска бота: %v", err)
