@@ -130,9 +130,7 @@ func (m Manager) GetReviewByID(ctx context.Context, reviewID string) (*Review, e
 	return NewReview(review), err
 }
 
-func (m Manager) UpdateReviewAnswer(ctx context.Context, review *Review, newAnswer string) (*Review, error) {
-	review.Answer = newAnswer
-
+func (m Manager) UpdateReview(ctx context.Context, review *Review) (*Review, error) {
 	_, err := m.repo.UpdateReview(ctx, review.ToDB(), db.WithColumns(db.Columns.Review.Answer))
 	if err != nil {
 		return nil, err

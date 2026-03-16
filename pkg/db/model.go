@@ -30,6 +30,11 @@ var Columns = struct {
 
 		Cabinet string
 	}
+	Product struct {
+		ID, CabinetID, Article, Title, ExternalID, Description, RecommendationIDs, StatusID string
+
+		Cabinet string
+	}
 }{
 	Cabinet: struct {
 		ID, Name, ClientID, Key, Marketplace, Type, SheetLink, StatusID string
@@ -106,6 +111,22 @@ var Columns = struct {
 
 		Cabinet: "Cabinet",
 	},
+	Product: struct {
+		ID, CabinetID, Article, Title, ExternalID, Description, RecommendationIDs, StatusID string
+
+		Cabinet string
+	}{
+		ID:                "productId",
+		CabinetID:         "cabinetId",
+		Article:           "article",
+		Title:             "title",
+		ExternalID:        "externalId",
+		Description:       "description",
+		RecommendationIDs: "recommendationIds",
+		StatusID:          "statusId",
+
+		Cabinet: "Cabinet",
+	},
 }
 
 var Tables = struct {
@@ -122,6 +143,9 @@ var Tables = struct {
 		Name, Alias string
 	}
 	Review struct {
+		Name, Alias string
+	}
+	Product struct {
 		Name, Alias string
 	}
 }{
@@ -153,6 +177,12 @@ var Tables = struct {
 		Name, Alias string
 	}{
 		Name:  "reviews",
+		Alias: "t",
+	},
+	Product: struct {
+		Name, Alias string
+	}{
+		Name:  "products",
 		Alias: "t",
 	},
 }
@@ -227,6 +257,21 @@ type Review struct {
 	CreatedAt    time.Time `pg:"createdAt,use_zero"`
 	StatusID     int       `pg:"statusId,use_zero"`
 	CustomerName string    `pg:"customerName,use_zero"`
+
+	Cabinet *Cabinet `pg:"fk:cabinetId,rel:has-one"`
+}
+
+type Product struct {
+	tableName struct{} `pg:"products,alias:t,discard_unknown_columns"`
+
+	ID                int     `pg:"productId,pk"`
+	CabinetID         int     `pg:"cabinetId,use_zero"`
+	Article           string  `pg:"article,use_zero"`
+	Title             string  `pg:"title,use_zero"`
+	ExternalID        string  `pg:"externalId,use_zero"`
+	Description       *string `pg:"description"`
+	RecommendationIDs []int   `pg:"recommendationIds,array"`
+	StatusID          int     `pg:"statusId,use_zero"`
 
 	Cabinet *Cabinet `pg:"fk:cabinetId,rel:has-one"`
 }
