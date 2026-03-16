@@ -178,7 +178,7 @@ func (m *Manager) wbStocksHandler(ctx context.Context, bot *botlib.Bot, update *
 
 	stocks, lostWarehouses, err := manager.GetStocks()
 	if err != nil {
-		_, err = SendTextMessage(ctx, bot, chatID, fmt.Sprintf("Ошибка при анализе остатков: %w", err))
+		_, err = SendTextMessage(ctx, bot, chatID, fmt.Sprintf("Ошибка при анализе остатков: %v", err))
 		if err != nil {
 			m.sl.Errorf("send msg failed: %v", err)
 			return
@@ -188,7 +188,7 @@ func (m *Manager) wbStocksHandler(ctx context.Context, bot *botlib.Bot, update *
 
 	filePath, err := generateExcelWB(orders, stocks, db.MarketWB)
 	if err != nil {
-		_, err = SendTextMessage(ctx, bot, chatID, fmt.Sprintf("Ошибка при генерации экселя: %w", err))
+		_, err = SendTextMessage(ctx, bot, chatID, fmt.Sprintf("Ошибка при генерации экселя: %v", err))
 		if err != nil {
 			m.sl.Errorf("send msg failed: %v", err)
 			return
@@ -227,7 +227,7 @@ func (m *Manager) returnsHandler(ctx context.Context, bot *botlib.Bot, update *m
 
 	filePath, err := wb.NewReturnsManager(cabinets[0].Key).WriteReturns()
 	if err != nil {
-		_, err = SendTextMessage(ctx, bot, chatID, fmt.Sprintf("Ошибка при анализе остатков: %w", err))
+		_, err = SendTextMessage(ctx, bot, chatID, fmt.Sprintf("Ошибка при анализе остатков: %v", err))
 		if err != nil {
 			m.sl.Errorf("send msg failed: %v", err)
 			return
@@ -286,7 +286,7 @@ func (m *Manager) sendReview(ctx context.Context, review tradeplus.Review) error
 
 	_, err := m.b.SendMessage(ctx, &botlib.SendMessageParams{ChatID: int64(m.reviewChatID), Text: text, ReplyMarkup: markup, ParseMode: models.ParseModeHTML})
 	if err != nil {
-		return fmt.Errorf("review#%w send failed: %w", review.ID, err)
+		return fmt.Errorf("review#%d send failed: %v", review.ID, err)
 	}
 	return nil
 }
