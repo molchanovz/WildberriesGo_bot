@@ -258,7 +258,7 @@ func (m ReviewManager) Reviews(ctx context.Context) ([]tradeplus.Review, error) 
 
 	newProducts := tradeplus.NewProducts(products)
 
-	// TODO get stocks and set recommendations
+	// TODO get stocks
 
 	newProducts.SetRecommendations(newProducts.Index())
 
@@ -266,6 +266,8 @@ func (m ReviewManager) Reviews(ctx context.Context) ([]tradeplus.Review, error) 
 
 	for _, nr := range unansweredReviews {
 		if _, ok := externalIDx[nr.ExternalID]; ok {
+			continue
+		} else if nr.Valuation < 4 { // skip if a valuation is less than 4
 			continue
 		}
 
@@ -298,7 +300,6 @@ func (m ReviewManager) SetAnswer(ctx context.Context, nr *tradeplus.Review, prod
 	}
 	nr.Answer = answer
 
-	// offer article if valuation is more than 3
 	if nr.Valuation > 3 {
 		nr.Answer += m.offerByArticle(product)
 	}
