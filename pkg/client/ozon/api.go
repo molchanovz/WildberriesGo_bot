@@ -266,6 +266,7 @@ func (c Client) PostingsListFbs(since, to string, offset int, status string) (Po
 	return p, err
 
 }
+
 func (c Client) Labels(postingNumber string) (string, error) {
 	baseURL := "https://api-seller.ozon.ru/v2/posting/fbs/package-label"
 
@@ -405,6 +406,28 @@ func (c Client) StocksAnalytics(skus []string) (StocksNew, error) {
 	err = json.Unmarshal([]byte(response), &s)
 	return s, err
 
+}
+
+func (c Client) Warehouses(cursor string) (WarehouseList, error) {
+	baseURL := "https://api-seller.ozon.ru/v2/warehouse/list"
+
+	body := []byte(fmt.Sprintf(`{"cursor": "%v"}`, cursor))
+
+	headers := map[string]string{
+		"Content-Type": "application/json",
+		"Client-Id":    c.clientID,
+		"Api-Key":      c.apiKey,
+	}
+
+	params := map[string]string{}
+
+	var w WarehouseList
+	response, err := c.post(baseURL, headers, params, body)
+	if err != nil {
+		return w, err
+	}
+	err = json.Unmarshal([]byte(response), &w)
+	return w, err
 }
 
 func (c Client) Products() (ProductList, error) {

@@ -85,6 +85,7 @@ func (m *Manager) RegisterBotHandlers() {
 	m.b.RegisterHandler(botlib.HandlerTypeCallbackQueryData, CallbackWbStocksHandler, botlib.MatchTypePrefix, m.wbStocksHandler)
 	m.b.RegisterHandler(botlib.HandlerTypeCallbackQueryData, CallbackWbReturnsHandler, botlib.MatchTypePrefix, m.returnsHandler)
 	m.b.RegisterHandler(botlib.HandlerTypeCallbackQueryData, CallbackOzonStickersHandler, botlib.MatchTypePrefix, m.ozonStickersHandler)
+	m.b.RegisterHandler(botlib.HandlerTypeCallbackQueryData, CallbackOzonSelectWarehouseHandler, botlib.MatchTypePrefix, m.ozonWarehouseStickersHandler)
 	m.b.RegisterHandler(botlib.HandlerTypeCallbackQueryData, CallbackOzonPrintStickersHandler, botlib.MatchTypePrefix, m.ozonPrintStickers)
 
 	m.b.RegisterHandler(botlib.HandlerTypeCallbackQueryData, CallbackSelectOzonCabinetHandler, botlib.MatchTypePrefix, m.ozonCabinetHandler)

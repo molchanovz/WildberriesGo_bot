@@ -24,13 +24,15 @@ import (
 type StickerManager struct {
 	clientID, token string
 	printedOrders   map[string]struct{}
+	warehouseID     int64
 }
 
-func NewStickerManager(clientID, token string, printedOrders map[string]struct{}) StickerManager {
+func NewStickerManager(clientID, token string, printedOrders map[string]struct{}, warehouseID int64) StickerManager {
 	return StickerManager{
 		clientID:      clientID,
 		token:         token,
 		printedOrders: printedOrders,
+		warehouseID:   warehouseID,
 	}
 }
 
@@ -179,6 +181,16 @@ func (m StickerManager) getSortedFbsOrders() (ozon.PostingslistFbs, error) {
 			break
 		}
 		offset += len(postingsListFbs.Result.PostingsFBS)
+	}
+
+	if m.warehouseID != 0 {
+		filtered := orders.Result.PostingsFBS[:0]
+		for _, p := range orders.Result.PostingsFBS {
+			if p.DeliveryMethod.WarehouseID == m.warehouseID {
+				filtered = append(filtered, p)
+			}
+		}
+		orders.Result.PostingsFBS = filtered
 	}
 
 	if len(orders.Result.PostingsFBS) == 0 {
