@@ -40,6 +40,7 @@ type Config struct {
 		OzonShipments  cron.Schedule
 		YandexWriter   cron.Schedule
 		WBWriter       cron.Schedule
+		WBShipments    cron.Schedule
 		OrderCleaner   cron.Schedule
 		SendNewReviews cron.Schedule
 	}

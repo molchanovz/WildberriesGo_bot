@@ -109,6 +109,37 @@ func (s *Manager) WriteOzonShipments(ctx context.Context) error {
 	return nil
 }
 
+func (s *Manager) WriteWBShipments(ctx context.Context) error {
+	cabinets, err := s.tm.GetCabinetsByMp(ctx, db.MarketWB)
+	if err != nil {
+		return err
+	}
+
+	msk := time.FixedZone("MSK", 3*3600)
+	now := time.Now().In(msk).AddDate(0, 0, -tradeplus.OrdersDaysAgo)
+	yesterday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, msk)
+
+	var failed []string
+	for _, cab := range cabinets {
+		if cab.Settings.ShipmentsSheetID == "" {
+			s.Print(ctx, fmt.Sprintf("wbShipments: cabinet=%d skipped (no shipmentsSheetId)", cab.ID))
+			continue
+		}
+		m, err := wb.NewShipmentsManager(cab)
+		if err != nil {
+			failed = append(failed, fmt.Sprintf("cab=%d init: %v", cab.ID, err))
+			continue
+		}
+		if err := m.WriteForDate(ctx, yesterday); err != nil {
+			failed = append(failed, err.Error())
+		}
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("wbShipments: %s", strings.Join(failed, "; "))
+	}
+	return nil
+}
+
 func (s *Manager) WriteYandex(ctx context.Context) error {
 	cabinets, err := s.tm.GetCabinetsByMp(ctx, db.MarketYandex)
 	if err != nil {

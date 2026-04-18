@@ -213,7 +213,7 @@ func (gs SheetsService) Append(spreadsheetID, writeRange string, values [][]inte
 	body := &sheets.ValueRange{Values: values}
 
 	_, err = srv.Spreadsheets.Values.Append(spreadsheetID, writeRange, body).
-		ValueInputOption("RAW").
+		ValueInputOption("USER_ENTERED").
 		InsertDataOption("INSERT_ROWS").
 		Do()
 	if err != nil {
