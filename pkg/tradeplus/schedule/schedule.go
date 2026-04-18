@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
+
 	"github.com/vmkteam/embedlog"
 	"tradebot/pkg/bot"
 	"tradebot/pkg/db"
@@ -72,6 +75,37 @@ func (s *Manager) WriteOzon(ctx context.Context) error {
 		return err
 	}
 
+	return nil
+}
+
+func (s *Manager) WriteOzonShipments(ctx context.Context) error {
+	cabinets, err := s.tm.GetCabinetsByMp(ctx, db.MarketOzon)
+	if err != nil {
+		return err
+	}
+
+	msk := time.FixedZone("MSK", 3*3600)
+	now := time.Now().In(msk).AddDate(0, 0, -tradeplus.OrdersDaysAgo)
+	yesterday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, msk)
+
+	var failed []string
+	for _, cab := range cabinets {
+		if cab.Settings.ShipmentsSheetID == "" {
+			s.Print(ctx, fmt.Sprintf("ozonShipments: cabinet=%d skipped (no shipmentsSheetId)", cab.ID))
+			continue
+		}
+		m, err := ozon.NewShipmentsManager(cab)
+		if err != nil {
+			failed = append(failed, fmt.Sprintf("cab=%d init: %v", cab.ID, err))
+			continue
+		}
+		if err := m.WriteForDate(ctx, yesterday); err != nil {
+			failed = append(failed, err.Error())
+		}
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("ozonShipments: %s", strings.Join(failed, "; "))
+	}
 	return nil
 }
 

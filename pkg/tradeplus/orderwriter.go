@@ -4,7 +4,7 @@ import (
 	"tradebot/pkg/client/google"
 )
 
-const OrdersDaysAgo = 1
+const OrdersDaysAgo = 4
 
 type GoogleSheetWriter interface {
 	Write() error

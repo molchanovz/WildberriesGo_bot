@@ -127,40 +127,97 @@ func (SheetsService) saveToken(path string, token *oauth2.Token) error {
 //	}
 // }
 
-func (gs SheetsService) Write(spreadsheetID, writeRange string, values [][]interface{}) error {
-	ctx := context.Background()
-
-	// Чтение файла с учетными данными клиента
+func (gs SheetsService) service(ctx context.Context) (*sheets.Service, error) {
 	b, err := os.ReadFile(gs.credentialsPath)
 	if err != nil {
-		return fmt.Errorf("unable to read client secret file: %w", err)
+		return nil, fmt.Errorf("unable to read client secret file: %w", err)
 	}
 
-	// Настройка OAuth 2.0 конфигурации
 	config, err := google.ConfigFromJSON(b, "https://www.googleapis.com/auth/spreadsheets")
 	if err != nil {
-		return fmt.Errorf("unable to parse client secret file to config: %w", err)
+		return nil, fmt.Errorf("unable to parse client secret file to config: %w", err)
 	}
 
-	// Получение клиента OAuth 2.0
-	client, _ := gs.getClient(config)
+	client, err := gs.getClient(config)
+	if err != nil {
+		return nil, fmt.Errorf("unable to get oauth client: %w", err)
+	}
 
-	// Создание сервиса для работы с Google Sheets
 	srv, err := sheets.NewService(ctx, option.WithHTTPClient(client))
 	if err != nil {
-		return fmt.Errorf("unable to retrieve Sheets client: %w", err)
+		return nil, fmt.Errorf("unable to retrieve Sheets client: %w", err)
+	}
+	return srv, nil
+}
+
+func (gs SheetsService) Write(spreadsheetID, writeRange string, values [][]interface{}) error {
+	ctx := context.Background()
+	srv, err := gs.service(ctx)
+	if err != nil {
+		return err
 	}
 
-	// Создание объекта ValueRange, который содержит данные для записи
 	body := &sheets.ValueRange{
 		Values: values,
 	}
 
-	// Вызов метода Update для записи данных
 	_, err = srv.Spreadsheets.Values.Update(spreadsheetID, writeRange, body).
 		ValueInputOption("RAW").Do()
 	if err != nil {
 		return fmt.Errorf("unable to update data in sheet: %w", err)
+	}
+
+	return nil
+}
+
+// EnsureSheet creates a sheet with the given title in the spreadsheet if it does not exist.
+// Returns true if the sheet was newly created, false if it already existed.
+func (gs SheetsService) EnsureSheet(spreadsheetID, title string) (bool, error) {
+	ctx := context.Background()
+	srv, err := gs.service(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	ss, err := srv.Spreadsheets.Get(spreadsheetID).Fields("sheets.properties.title").Do()
+	if err != nil {
+		return false, fmt.Errorf("get spreadsheet: %w", err)
+	}
+	for _, s := range ss.Sheets {
+		if s.Properties != nil && s.Properties.Title == title {
+			return false, nil
+		}
+	}
+
+	_, err = srv.Spreadsheets.BatchUpdate(spreadsheetID, &sheets.BatchUpdateSpreadsheetRequest{
+		Requests: []*sheets.Request{{
+			AddSheet: &sheets.AddSheetRequest{
+				Properties: &sheets.SheetProperties{Title: title},
+			},
+		}},
+	}).Do()
+	if err != nil {
+		return false, fmt.Errorf("add sheet %q: %w", title, err)
+	}
+	return true, nil
+}
+
+// Append adds rows after the last non-empty row in the given range.
+func (gs SheetsService) Append(spreadsheetID, writeRange string, values [][]interface{}) error {
+	ctx := context.Background()
+	srv, err := gs.service(ctx)
+	if err != nil {
+		return err
+	}
+
+	body := &sheets.ValueRange{Values: values}
+
+	_, err = srv.Spreadsheets.Values.Append(spreadsheetID, writeRange, body).
+		ValueInputOption("RAW").
+		InsertDataOption("INSERT_ROWS").
+		Do()
+	if err != nil {
+		return fmt.Errorf("unable to append data to sheet: %w", err)
 	}
 
 	return nil

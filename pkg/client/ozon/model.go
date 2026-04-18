@@ -522,7 +522,7 @@ type WarehouseList struct {
 			} `json:"working_hours"`
 		} `json:"timetable"`
 		UpdatedAt    string   `json:"updated_at"`
-		WarehouseID  int64    `json:"warehouse_id"`
+		WarehouseID  int      `json:"warehouse_id"`
 		WithItemList bool     `json:"with_item_list"`
 		WorkingDays  []string `json:"working_days"`
 	} `json:"warehouses"`

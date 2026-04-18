@@ -8,5 +8,7 @@
     </Languages>
     <GoPGVer>10</GoPGVer>
     <CustomTypes></CustomTypes>
-    <TableMapping></TableMapping>
+    <TableMapping>
+        <tradebot>cabinets,orders,stocks,users,reviews,products</tradebot>
+    </TableMapping>
 </Project>
