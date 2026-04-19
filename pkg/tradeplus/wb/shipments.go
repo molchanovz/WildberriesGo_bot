@@ -446,10 +446,10 @@ func (m *ShipmentsManager) WriteForDate(ctx context.Context, day time.Time) erro
 
 	dayLabel := day.Day()
 	var errs []string
-	if err := m.upload(fmt.Sprintf("Отгружено на WB FBS-%d", dayLabel), wbHeader, mainBs); err != nil {
+	if err := m.upload(fmt.Sprintf("Отправлено на WB FBS-%d", dayLabel), wbHeader, mainBs); err != nil {
 		errs = append(errs, fmt.Sprintf("main upload: %v", err))
 	}
-	if err := m.upload(fmt.Sprintf("Отгружено на WB ФФ FBS-%d", dayLabel), wbHeader, ffBs); err != nil {
+	if err := m.upload(fmt.Sprintf("Отправлено на WB ФФ FBS-%d", dayLabel), wbHeader, ffBs); err != nil {
 		errs = append(errs, fmt.Sprintf("ff upload: %v", err))
 	}
 	if len(errs) > 0 {

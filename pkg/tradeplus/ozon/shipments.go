@@ -364,10 +364,10 @@ func (m *ShipmentsManager) WriteForDate(ctx context.Context, day time.Time) erro
 
 	dayLabel := shipFrom.Day()
 	if header != nil {
-		if err := m.upload(fmt.Sprintf("Отгружено на Ozon FBS-%d", dayLabel), header, mainBs); err != nil {
+		if err := m.upload(fmt.Sprintf("Отправлено на Ozon FBS-%d", dayLabel), header, mainBs); err != nil {
 			errs = append(errs, fmt.Sprintf("main upload: %v", err))
 		}
-		if err := m.upload(fmt.Sprintf("Отгружено на Ozon ФФ FBS-%d", dayLabel), header, ffBs); err != nil {
+		if err := m.upload(fmt.Sprintf("Отправлено на Ozon ФФ FBS-%d", dayLabel), header, ffBs); err != nil {
 			errs = append(errs, fmt.Sprintf("ff upload: %v", err))
 		}
 	}

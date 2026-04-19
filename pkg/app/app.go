@@ -36,13 +36,14 @@ type Config struct {
 		ChatGPTSrvURL string
 	}
 	Cron struct {
-		OzonWriter     cron.Schedule
-		OzonShipments  cron.Schedule
-		YandexWriter   cron.Schedule
-		WBWriter       cron.Schedule
-		WBShipments    cron.Schedule
-		OrderCleaner   cron.Schedule
-		SendNewReviews cron.Schedule
+		OzonWriter      cron.Schedule
+		OzonShipments   cron.Schedule
+		YandexWriter    cron.Schedule
+		YandexShipments cron.Schedule
+		WBWriter        cron.Schedule
+		WBShipments     cron.Schedule
+		OrderCleaner    cron.Schedule
+		SendNewReviews  cron.Schedule
 	}
 	OpenAI struct {
 		Token string
