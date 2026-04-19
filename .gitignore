@@ -7,4 +7,6 @@ coverage.xml
 pkg/client/google/token.json
 pkg/client/google/credentials.json
 .env
+.claude
 /tmp
+CLAUDE.md
