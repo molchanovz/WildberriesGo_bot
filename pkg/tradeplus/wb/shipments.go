@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"tradebot/pkg/client/google"
@@ -50,7 +49,7 @@ var wbSupplierStatusRu = map[string]string{
 var wbHeader = []string{
 	"№ задания", "QR-код поставки", "Стикер", "Дата создания", "Дата сканирования ШК ТТН",
 	"Наименование", "Размер", "Цвет", "Баркод", "Стоимость", "Валюта",
-	"Артикул Wildberries", "Артикул продавца", "Склад продавца", "Статус задания",
+	"Артикул Wildberries", "Артикул продавца", "ID склада", "Статус задания",
 }
 
 type wbShipmentsAPI struct {
@@ -150,12 +149,6 @@ type wbStatusesResp struct {
 		SupplierStatus string `json:"supplierStatus"`
 		WbStatus       string `json:"wbStatus"`
 	} `json:"orders"`
-}
-
-type wbWarehouse struct {
-	ID       int    `json:"id"`
-	Name     string `json:"name"`
-	OfficeID int    `json:"officeId"`
 }
 
 func (a wbShipmentsAPI) listSuppliesOnDate(ctx context.Context, loc *time.Location, day time.Time) ([]wbSupply, error) {
@@ -308,25 +301,12 @@ func (a wbShipmentsAPI) statuses(ctx context.Context, ids []int) (map[int]string
 	return out, nil
 }
 
-func (a wbShipmentsAPI) warehouses(ctx context.Context) ([]wbWarehouse, error) {
-	data, err := a.do(ctx, http.MethodGet, "/api/v3/warehouses", nil, nil)
-	if err != nil {
-		return nil, err
-	}
-	var ws []wbWarehouse
-	if err := json.Unmarshal(data, &ws); err != nil {
-		return nil, fmt.Errorf("decode warehouses: %w; body=%s", err, string(data))
-	}
-	return ws, nil
-}
-
-// ShipmentsManager заливает FBS-отгрузки WB кабинета за выбранную дату в Google Sheets,
-// разделяя строки по складам: main → один лист, остальные → ФФ-лист.
+// ShipmentsManager заливает FBS-отгрузки WB кабинета за выбранную дату в один
+// лист Google Sheets. ID склада пишется в отдельный столбец.
 type ShipmentsManager struct {
 	api           wbShipmentsAPI
 	sheets        google.SheetsService
 	spreadsheetID string
-	mainIDs       map[int]struct{}
 	cabinetID     int
 	cabinetName   string
 }
@@ -338,27 +318,17 @@ func NewShipmentsManager(cabinet tradeplus.Cabinet) (*ShipmentsManager, error) {
 	if cabinet.Settings.ShipmentsSheetID == "" {
 		return nil, fmt.Errorf("cabinet %d: empty shipmentsSheetId", cabinet.ID)
 	}
-	mains := make(map[int]struct{}, len(cabinet.Settings.MainWarehouseIDs))
-	for _, id := range cabinet.Settings.MainWarehouseIDs {
-		mains[id] = struct{}{}
-	}
 	return &ShipmentsManager{
 		api:           newWBShipmentsAPI(cabinet.Key),
 		sheets:        google.NewSheetsService("pkg/client/google/token.json", "pkg/client/google/credentials.json"),
 		spreadsheetID: cabinet.Settings.ShipmentsSheetID,
-		mainIDs:       mains,
 		cabinetID:     cabinet.ID,
 		cabinetName:   cabinet.Name,
 	}, nil
 }
 
-type warehouseBlock struct {
-	name string
-	rows [][]string
-}
-
-// WriteForDate берёт supplies со scanDt = day (MSK), достаёт заказы/стикеры/статусы,
-// группирует по warehouseId и пишет в листы main / ФФ.
+// WriteForDate берёт supplies со scanDt = day (MSK), достаёт заказы/стикеры/статусы
+// и пишет все строки в один лист. ID склада находится в столбце "ID склада".
 func (m *ShipmentsManager) WriteForDate(ctx context.Context, day time.Time) error {
 	msk := day.Location()
 
@@ -408,15 +378,6 @@ func (m *ShipmentsManager) WriteForDate(ctx context.Context, day time.Time) erro
 		return fmt.Errorf("statuses: %w", err)
 	}
 
-	whs, err := m.api.warehouses(ctx)
-	if err != nil {
-		log.Printf("wbShipments: cabinet=%d warehouses fetch failed: %v (using IDs)", m.cabinetID, err)
-	}
-	nameByID := make(map[int]string, len(whs))
-	for _, w := range whs {
-		nameByID[w.ID] = w.Name
-	}
-
 	byWh := map[int][]int{}
 	for _, id := range allOrderIDs {
 		wh := orders[id].WarehouseID
@@ -428,32 +389,14 @@ func (m *ShipmentsManager) WriteForDate(ctx context.Context, day time.Time) erro
 	}
 	sort.Ints(whIDs)
 
-	var mainBs, ffBs []warehouseBlock
+	var rows [][]string
 	for _, wh := range whIDs {
-		ids := byWh[wh]
-		rows := buildWBRows(ids, orderToSupply, orders, stickerMap, statusMap, msk)
-		name := nameByID[wh]
-		if name == "" {
-			name = strconv.Itoa(wh)
-		}
-		block := warehouseBlock{name: name, rows: rows}
-		if _, isMain := m.mainIDs[wh]; isMain {
-			mainBs = append(mainBs, block)
-		} else {
-			ffBs = append(ffBs, block)
-		}
+		rows = append(rows, buildWBRows(byWh[wh], orderToSupply, orders, stickerMap, statusMap, msk)...)
 	}
 
-	dayLabel := day.Day()
-	var errs []string
-	if err := m.upload(fmt.Sprintf("Отправлено на WB FBS-%d", dayLabel), wbHeader, mainBs); err != nil {
-		errs = append(errs, fmt.Sprintf("main upload: %v", err))
-	}
-	if err := m.upload(fmt.Sprintf("Отправлено на WB ФФ FBS-%d", dayLabel), wbHeader, ffBs); err != nil {
-		errs = append(errs, fmt.Sprintf("ff upload: %v", err))
-	}
-	if len(errs) > 0 {
-		return fmt.Errorf("cabinet=%d: %s", m.cabinetID, strings.Join(errs, "; "))
+	title := fmt.Sprintf("Отправлено на WB FBS-%d", day.Day())
+	if err := m.upload(title, wbHeader, rows); err != nil {
+		return fmt.Errorf("cabinet=%d: %w", m.cabinetID, err)
 	}
 	return nil
 }
@@ -520,27 +463,23 @@ func buildWBRows(orderIDs []int, orderToSupply map[int]*wbSupply, orders map[int
 	return rows
 }
 
-func (m *ShipmentsManager) upload(title string, header []string, blocks []warehouseBlock) error {
-	if len(blocks) == 0 {
+func (m *ShipmentsManager) upload(title string, header []string, rows [][]string) error {
+	if len(rows) == 0 {
 		return nil
 	}
 	if _, err := m.sheets.EnsureSheet(m.spreadsheetID, title); err != nil {
 		return fmt.Errorf("ensure sheet %q: %w", title, err)
 	}
-	var values [][]interface{}
-	totalRows := 0
-	for _, b := range blocks {
-		values = append(values, toIface([]string{m.cabinetName, b.name}))
-		values = append(values, toIface(header))
-		for _, r := range b.rows {
-			values = append(values, toIface(r))
-		}
-		totalRows += len(b.rows)
+	values := make([][]interface{}, 0, len(rows)+2)
+	values = append(values, toIface([]string{m.cabinetName}))
+	values = append(values, toIface(header))
+	for _, r := range rows {
+		values = append(values, toIface(r))
 	}
 	if err := m.sheets.Append(m.spreadsheetID, title+"!A1", values); err != nil {
 		return fmt.Errorf("append %q: %w", title, err)
 	}
-	log.Printf("wbShipments: cabinet=%d sheet=%q blocks=%d rows=%d", m.cabinetID, title, len(blocks), totalRows)
+	log.Printf("wbShipments: cabinet=%d sheet=%q rows=%d", m.cabinetID, title, len(rows))
 	return nil
 }
 

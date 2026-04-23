@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,11 +20,12 @@ import (
 )
 
 const (
-	shipmentsReportLookback = 30 * 24 * time.Hour
-	shipmentsReportTail     = 2 * 24 * time.Hour
-	shipmentsReportTimeout  = 10 * time.Minute
-	shipmentsParallelism    = 4
-	shipmentsDateColumn     = "Фактическая дата передачи в доставку"
+	shipmentsReportLookback  = 30 * 24 * time.Hour
+	shipmentsReportTail      = 2 * 24 * time.Hour
+	shipmentsReportTimeout   = 10 * time.Minute
+	shipmentsParallelism     = 4
+	shipmentsDateColumn      = "Фактическая дата передачи в доставку"
+	shipmentsWarehouseColumn = "ID склада"
 )
 
 // ozonReportAPI — лёгкая обёртка вокруг Ozon report endpoints.
@@ -232,14 +234,13 @@ func parseShipmentCSV(raw []byte, from, to time.Time, loc *time.Location) (heade
 	return header, rows, nil
 }
 
-// ShipmentsManager заливает FBS-отгрузки кабинета за выбранную дату в Google Sheets,
-// разделяя строки по складам: main → один лист, остальные → ФФ-лист.
+// ShipmentsManager заливает FBS-отгрузки кабинета за выбранную дату в один
+// лист Google Sheets. ID склада пишется в отдельный столбец в каждой строке.
 type ShipmentsManager struct {
 	api           ozonReportAPI
 	ozonClient    ozon.Client
 	sheets        google.SheetsService
 	spreadsheetID string
-	mainIDs       map[int]struct{}
 	cabinetID     int
 	cabinetName   string
 }
@@ -252,24 +253,18 @@ func NewShipmentsManager(cabinet tradeplus.Cabinet) (*ShipmentsManager, error) {
 		return nil, fmt.Errorf("cabinet %d: empty shipmentsSheetId", cabinet.ID)
 	}
 
-	mains := make(map[int]struct{}, len(cabinet.Settings.MainWarehouseIDs))
-	for _, id := range cabinet.Settings.MainWarehouseIDs {
-		mains[id] = struct{}{}
-	}
-
 	return &ShipmentsManager{
 		api:           newOzonReportAPI(*cabinet.ClientID, cabinet.Key),
 		ozonClient:    ozon.NewClient(*cabinet.ClientID, cabinet.Key),
 		sheets:        google.NewSheetsService("pkg/client/google/token.json", "pkg/client/google/credentials.json"),
 		spreadsheetID: cabinet.Settings.ShipmentsSheetID,
-		mainIDs:       mains,
 		cabinetID:     cabinet.ID,
 		cabinetName:   cabinet.Name,
 	}, nil
 }
 
 // WriteForDate качает по отчёту на каждый склад кабинета за окно [day, day+1) MSK
-// и пишет результат в листы main / ФФ.
+// и пишет все строки в один лист, добавляя колонку с ID склада.
 func (m *ShipmentsManager) WriteForDate(ctx context.Context, day time.Time) error {
 	msk := day.Location()
 	shipFrom := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, msk)
@@ -338,10 +333,9 @@ func (m *ShipmentsManager) WriteForDate(ctx context.Context, day time.Time) erro
 	wg.Wait()
 
 	var (
-		header []string
-		mainBs []warehouseBlock
-		ffBs   []warehouseBlock
-		errs   []string
+		header  []string
+		allRows [][]string
+		errs    []string
 	)
 	for _, r := range results {
 		if r.err != nil {
@@ -351,24 +345,17 @@ func (m *ShipmentsManager) WriteForDate(ctx context.Context, day time.Time) erro
 		if header == nil && r.header != nil {
 			header = r.header
 		}
-		if len(r.rows) == 0 {
-			continue
-		}
-		block := warehouseBlock{name: r.warehouseName, rows: r.rows}
-		if _, isMain := m.mainIDs[r.warehouseID]; isMain {
-			mainBs = append(mainBs, block)
-		} else {
-			ffBs = append(ffBs, block)
+		whID := strconv.Itoa(r.warehouseID)
+		for _, row := range r.rows {
+			allRows = append(allRows, append([]string{whID}, row...))
 		}
 	}
 
-	dayLabel := shipFrom.Day()
 	if header != nil {
-		if err := m.upload(fmt.Sprintf("Отправлено на Ozon FBS-%d", dayLabel), header, mainBs); err != nil {
-			errs = append(errs, fmt.Sprintf("main upload: %v", err))
-		}
-		if err := m.upload(fmt.Sprintf("Отправлено на Ozon ФФ FBS-%d", dayLabel), header, ffBs); err != nil {
-			errs = append(errs, fmt.Sprintf("ff upload: %v", err))
+		title := fmt.Sprintf("Отправлено на Ozon FBS-%d", shipFrom.Day())
+		fullHeader := append([]string{shipmentsWarehouseColumn}, header...)
+		if err := m.upload(title, fullHeader, allRows); err != nil {
+			errs = append(errs, err.Error())
 		}
 	}
 
@@ -378,33 +365,24 @@ func (m *ShipmentsManager) WriteForDate(ctx context.Context, day time.Time) erro
 	return nil
 }
 
-type warehouseBlock struct {
-	name string
-	rows [][]string
-}
-
-func (m *ShipmentsManager) upload(title string, header []string, blocks []warehouseBlock) error {
-	if len(blocks) == 0 {
+func (m *ShipmentsManager) upload(title string, header []string, rows [][]string) error {
+	if len(rows) == 0 {
 		return nil
 	}
 	if _, err := m.sheets.EnsureSheet(m.spreadsheetID, title); err != nil {
 		return fmt.Errorf("ensure sheet %q: %w", title, err)
 	}
 
-	var values [][]interface{}
-	totalRows := 0
-	for _, b := range blocks {
-		values = append(values, toIface([]string{m.cabinetName, b.name}))
-		values = append(values, toIface(header))
-		for _, r := range b.rows {
-			values = append(values, toIface(r))
-		}
-		totalRows += len(b.rows)
+	values := make([][]interface{}, 0, len(rows)+2)
+	values = append(values, toIface([]string{m.cabinetName}))
+	values = append(values, toIface(header))
+	for _, r := range rows {
+		values = append(values, toIface(r))
 	}
 	if err := m.sheets.Append(m.spreadsheetID, title+"!A1", values); err != nil {
 		return fmt.Errorf("append %q: %w", title, err)
 	}
-	log.Printf("ozonShipments: cabinet=%d sheet=%q blocks=%d rows=%d", m.cabinetID, title, len(blocks), totalRows)
+	log.Printf("ozonShipments: cabinet=%d sheet=%q rows=%d", m.cabinetID, title, len(rows))
 	return nil
 }
 
