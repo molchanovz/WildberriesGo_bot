@@ -386,6 +386,7 @@ func (m *Manager) updateReview(ctx context.Context, bot *botlib.Bot, chatID int6
 		if err != nil {
 			return
 		}
+		review.Answer = message.Text
 		review, err = m.tm.UpdateReview(ctx, review)
 		if err != nil {
 			log.Println("Ошибка получения кабинета")
