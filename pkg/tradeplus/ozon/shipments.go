@@ -345,7 +345,7 @@ func (m *ShipmentsManager) WriteForDate(ctx context.Context, day time.Time) erro
 		if header == nil && r.header != nil {
 			header = r.header
 		}
-		whID := strconv.Itoa(r.warehouseID)
+		whID := "'" + strconv.Itoa(r.warehouseID)
 		for _, row := range r.rows {
 			allRows = append(allRows, append([]string{whID}, row...))
 		}
