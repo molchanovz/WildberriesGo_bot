@@ -100,20 +100,22 @@ func (m Manager) GetPrintedOrders(ctx context.Context, id int) (map[string]struc
 }
 
 func (m Manager) CreateOrders(ctx context.Context, cabinetID int, newOrders ozon.PostingslistFbs) error {
-	for _, order := range newOrders.Result.PostingsFBS {
-		dbOrder := db.Order{
-			PostingNumber: order.PostingNumber,
-			CabinetID:     cabinetID,
-			Article:       order.Products[0].OfferID,
-			CreatedAt:     time.Now(),
-			StatusID:      db.StatusEnabled,
+	return m.db.RunInTransaction(ctx, func(tx *pg.Tx) error {
+		repo := m.repo.WithTransaction(tx)
+		for _, order := range newOrders.Result.PostingsFBS {
+			dbOrder := db.Order{
+				PostingNumber: order.PostingNumber,
+				CabinetID:     cabinetID,
+				Article:       order.Products[0].OfferID,
+				CreatedAt:     time.Now(),
+				StatusID:      db.StatusEnabled,
+			}
+			if _, err := repo.AddOrder(ctx, &dbOrder); err != nil {
+				return err
+			}
 		}
-		_, err := m.repo.AddOrder(ctx, &dbOrder)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func (m Manager) DeleteOrders(ctx context.Context) error {

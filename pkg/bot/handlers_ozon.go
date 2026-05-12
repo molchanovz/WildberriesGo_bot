@@ -276,6 +276,14 @@ func (m *Manager) ozonPrintStickers(ctx context.Context, bot *botlib.Bot, update
 	newOrders := ozonClient.PostingslistFbs{}
 
 	printedOrdersMap, err := m.tm.GetPrintedOrders(ctx, cabinet.ID)
+	if err != nil {
+		log.Println("Ошибка получения списка напечатанных заказов:", err)
+		_, sendErr := SendTextMessage(ctx, bot, chatID, fmt.Sprintf("ошибка получения списка напечатанных заказов: %v", err))
+		if sendErr != nil {
+			log.Println(sendErr)
+		}
+		return
+	}
 
 	manager := ozon.NewService(cabinet).GetStickersFBSManager(printedOrdersMap, warehouseID)
 
