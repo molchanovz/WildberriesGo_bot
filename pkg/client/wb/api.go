@@ -103,7 +103,6 @@ func (c Client) getOrdersBySupplyID(supplyID string) (string, error) {
 }
 
 func (c Client) getReturns(dateFrom, dateTo string) (string, error) {
-
 	params := url.Values{}
 	params.Add("dateFrom", dateFrom)
 	params.Add("dateTo", dateTo)
@@ -377,16 +376,38 @@ func (c Client) AnswerReview(id, answer string) error {
 
 	params := map[string]string{}
 
-	status, _, err := c.post(baseURL, headers, params, body)
+	status, response, err := c.post(baseURL, headers, params, body)
 	if err != nil {
 		return fmt.Errorf("response get failed: %w", err)
 	}
 
-	if status != http.StatusNoContent {
-		return fmt.Errorf("status not OK: %d", status)
+	if status == http.StatusNoContent {
+		return nil
 	}
 
-	return nil
+	var errResp struct {
+		Title     string `json:"title"`
+		Detail    string `json:"detail"`
+		Code      string `json:"code"`
+		Error     bool   `json:"error"`
+		ErrorText string `json:"errorText"`
+	}
+	if jsonErr := json.Unmarshal([]byte(response), &errResp); jsonErr == nil {
+		if errResp.ErrorText != "" {
+			return fmt.Errorf("wb answer review failed (status %d): %s", status, errResp.ErrorText)
+		}
+		if errResp.Detail != "" {
+			return fmt.Errorf("wb answer review failed (status %d): %s", status, errResp.Detail)
+		}
+		if errResp.Title != "" {
+			return fmt.Errorf("wb answer review failed (status %d): %s", status, errResp.Title)
+		}
+	}
+
+	if response != "" {
+		return fmt.Errorf("wb answer review failed (status %d): %s", status, response)
+	}
+	return fmt.Errorf("wb answer review failed (status %d)", status)
 }
 
 func GetUnix(date time.Time) int64 {

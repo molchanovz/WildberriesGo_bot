@@ -312,6 +312,7 @@ func (m *Manager) wbAnswerReview(ctx context.Context, bot *botlib.Bot, update *m
 	err = manager.AnswerReview(ctx, reviewId)
 	if err != nil {
 		m.sl.Errorf("%v", err)
+		_, _ = bot.AnswerCallbackQuery(ctx, &botlib.AnswerCallbackQueryParams{Text: err.Error(), ShowAlert: true, CallbackQueryID: update.CallbackQuery.ID})
 		return
 	}
 
@@ -385,6 +386,7 @@ func (m *Manager) updateReview(ctx context.Context, bot *botlib.Bot, chatID int6
 		if err != nil {
 			return
 		}
+		review.Answer = message.Text
 		review, err = m.tm.UpdateReview(ctx, review)
 		if err != nil {
 			log.Println("Ошибка получения кабинета")
