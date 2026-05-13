@@ -225,7 +225,6 @@ func (c Client) PostingFbs(postingNumber string) (PostingFBS, error) {
 	}
 	err = json.Unmarshal([]byte(response), &p)
 	return p, err
-
 }
 
 // v3PostingFbsList метод получения ФБС заказов
@@ -264,7 +263,6 @@ func (c Client) PostingsListFbs(since, to string, offset int, status string) (Po
 	}
 	err = json.Unmarshal([]byte(response), &p)
 	return p, err
-
 }
 
 func (c Client) Labels(postingNumber string) (string, error) {

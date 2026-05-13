@@ -25,7 +25,14 @@ const (
 	shipmentsReportTimeout   = 10 * time.Minute
 	shipmentsParallelism     = 4
 	shipmentsDateColumn      = "Фактическая дата передачи в доставку"
+	shipmentsInProcessColumn = "Принят в обработку"
+	shipmentsStatusColumn    = "Статус"
 	shipmentsWarehouseColumn = "ID склада"
+	// aggregatedCutoffHour: окно агрегированного листа смещено на этот час MSK.
+	// Для day = yyyy-mm-dd 00:00 MSK реальное окно: [day + 17h, day + 41h).
+	// Cron при этом срабатывает в 18:00 MSK — это часовая «дельта», даём WB/Ozon
+	// время отдать актуальные данные.
+	aggregatedCutoffHour = 17
 )
 
 // ozonReportAPI — лёгкая обёртка вокруг Ozon report endpoints.
@@ -184,9 +191,10 @@ func parseOzonDate(s string, loc *time.Location) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// parseShipmentCSV парсит скачанный CSV отчёта и возвращает заголовок и строки,
-// у которых «Фактическая дата передачи в доставку» ∈ [from, to).
-func parseShipmentCSV(raw []byte, from, to time.Time, loc *time.Location) (header []string, rows [][]string, err error) {
+// parseShipmentCSV парсит скачанный CSV отчёта и возвращает заголовок и все
+// строки данных. Фильтрация по дате выполняется отдельно через
+// filterRowsByDateColumn.
+func parseShipmentCSV(raw []byte) (header []string, rows [][]string, err error) {
 	body := bytes.TrimPrefix(raw, []byte{0xEF, 0xBB, 0xBF})
 
 	r := csv.NewReader(bytes.NewReader(body))
@@ -201,25 +209,62 @@ func parseShipmentCSV(raw []byte, from, to time.Time, loc *time.Location) (heade
 	if len(all) == 0 {
 		return nil, nil, nil
 	}
+	return all[0], all[1:], nil
+}
 
-	header = all[0]
-	shipCol := -1
+// findColumn возвращает индекс колонки по имени (учитывая BOM/пробелы) или -1.
+func findColumn(header []string, name string) int {
 	for i, h := range header {
-		name := strings.TrimPrefix(strings.TrimSpace(h), "\ufeff")
-		if name == shipmentsDateColumn {
-			shipCol = i
-			break
+		n := strings.TrimPrefix(strings.TrimSpace(h), "\ufeff")
+		if n == name {
+			return i
 		}
 	}
-	if shipCol == -1 {
-		return nil, nil, fmt.Errorf("колонка %q не найдена; заголовки=%v", shipmentsDateColumn, header)
-	}
+	return -1
+}
 
-	for _, row := range all[1:] {
-		if shipCol >= len(row) {
+// dropCancelledNotShipped выкидывает строки, у которых статус содержит «отмен»
+// (Отменён/Отменено/...), а колонка с фактической датой передачи в доставку пустая.
+// Возвращает (отфильтрованные строки, сколько выкинуто).
+func dropCancelledNotShipped(header []string, rows [][]string) ([][]string, int) {
+	statusCol := findColumn(header, shipmentsStatusColumn)
+	shipCol := findColumn(header, shipmentsDateColumn)
+	if statusCol == -1 || shipCol == -1 {
+		return rows, 0
+	}
+	out := make([][]string, 0, len(rows))
+	dropped := 0
+	for _, row := range rows {
+		status := ""
+		if statusCol < len(row) {
+			status = strings.ToLower(strings.TrimSpace(row[statusCol]))
+		}
+		ship := ""
+		if shipCol < len(row) {
+			ship = strings.TrimSpace(row[shipCol])
+		}
+		if ship == "" && strings.Contains(status, "отмен") {
+			dropped++
 			continue
 		}
-		v := strings.TrimSpace(row[shipCol])
+		out = append(out, row)
+	}
+	return out, dropped
+}
+
+// filterRowsByDateColumn оставляет строки, у которых значение в колонке colName
+// парсится как время и лежит в [from, to).
+func filterRowsByDateColumn(header []string, rows [][]string, colName string, from, to time.Time, loc *time.Location) ([][]string, error) {
+	col := findColumn(header, colName)
+	if col == -1 {
+		return nil, fmt.Errorf("колонка %q не найдена; заголовки=%v", colName, header)
+	}
+	var out [][]string
+	for _, row := range rows {
+		if col >= len(row) {
+			continue
+		}
+		v := strings.TrimSpace(row[col])
 		if v == "" {
 			continue
 		}
@@ -228,21 +273,23 @@ func parseShipmentCSV(raw []byte, from, to time.Time, loc *time.Location) (heade
 			continue
 		}
 		if !t.Before(from) && t.Before(to) {
-			rows = append(rows, row)
+			out = append(out, row)
 		}
 	}
-	return header, rows, nil
+	return out, nil
 }
 
 // ShipmentsManager заливает FBS-отгрузки кабинета за выбранную дату в один
 // лист Google Sheets. ID склада пишется в отдельный столбец в каждой строке.
 type ShipmentsManager struct {
-	api           ozonReportAPI
-	ozonClient    ozon.Client
-	sheets        google.SheetsService
-	spreadsheetID string
-	cabinetID     int
-	cabinetName   string
+	api              ozonReportAPI
+	ozonClient       ozon.Client
+	sheets           google.SheetsService
+	spreadsheetID    string
+	allSpreadsheetID string
+	excludedWHs      map[int]struct{}
+	cabinetID        int
+	cabinetName      string
 }
 
 func NewShipmentsManager(cabinet tradeplus.Cabinet) (*ShipmentsManager, error) {
@@ -253,43 +300,46 @@ func NewShipmentsManager(cabinet tradeplus.Cabinet) (*ShipmentsManager, error) {
 		return nil, fmt.Errorf("cabinet %d: empty shipmentsSheetId", cabinet.ID)
 	}
 
+	excluded := map[int]struct{}{}
+	for _, s := range cabinet.Settings.ExcludedShipmentsWarehouseIDs {
+		if id, err := strconv.Atoi(s); err == nil {
+			excluded[id] = struct{}{}
+		}
+	}
 	return &ShipmentsManager{
-		api:           newOzonReportAPI(*cabinet.ClientID, cabinet.Key),
-		ozonClient:    ozon.NewClient(*cabinet.ClientID, cabinet.Key),
-		sheets:        google.NewSheetsService("pkg/client/google/token.json", "pkg/client/google/credentials.json"),
-		spreadsheetID: cabinet.Settings.ShipmentsSheetID,
-		cabinetID:     cabinet.ID,
-		cabinetName:   cabinet.Name,
+		api:              newOzonReportAPI(*cabinet.ClientID, cabinet.Key),
+		ozonClient:       ozon.NewClient(*cabinet.ClientID, cabinet.Key),
+		sheets:           google.NewSheetsService("pkg/client/google/token.json", "pkg/client/google/credentials.json"),
+		spreadsheetID:    cabinet.Settings.ShipmentsSheetID,
+		allSpreadsheetID: cabinet.Settings.ShipmentsAllSheetID,
+		excludedWHs:      excluded,
+		cabinetID:        cabinet.ID,
+		cabinetName:      cabinet.Name,
 	}, nil
 }
 
-// WriteForDate качает по отчёту на каждый склад кабинета за окно [day, day+1) MSK
-// и пишет все строки в один лист, добавляя колонку с ID склада.
-func (m *ShipmentsManager) WriteForDate(ctx context.Context, day time.Time) error {
-	msk := day.Location()
-	shipFrom := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, msk)
-	shipTo := shipFrom.AddDate(0, 0, 1)
-	reportFromUTC := shipFrom.Add(-shipmentsReportLookback).UTC()
-	reportToUTC := shipTo.Add(shipmentsReportTail).UTC()
+// warehouseCSV — сырой результат скачивания отчёта по одному складу.
+type warehouseCSV struct {
+	warehouseID   int
+	warehouseName string
+	header        []string
+	rows          [][]string
+	err           error
+}
 
+// fetchWarehouseCSVs параллельно генерирует, ждёт и скачивает отчёт постингов
+// по каждому складу кабинета за указанное окно processed_at_from/to (UTC).
+// Возвращает по одному элементу на склад; ошибки конкретных складов лежат в .err.
+func (m *ShipmentsManager) fetchWarehouseCSVs(ctx context.Context, reportFromUTC, reportToUTC time.Time) ([]warehouseCSV, error) {
 	wl, err := m.ozonClient.Warehouses("")
 	if err != nil {
-		return fmt.Errorf("warehouses: %w", err)
+		return nil, fmt.Errorf("warehouses: %w", err)
 	}
 	if len(wl.Warehouses) == 0 {
-		log.Printf("ozonShipments: cabinet=%d no warehouses, skip", m.cabinetID)
-		return nil
+		return nil, nil
 	}
 
-	type result struct {
-		warehouseID   int
-		warehouseName string
-		header        []string
-		rows          [][]string
-		err           error
-	}
-	results := make([]result, len(wl.Warehouses))
-
+	results := make([]warehouseCSV, len(wl.Warehouses))
 	sem := make(chan struct{}, shipmentsParallelism)
 	var wg sync.WaitGroup
 	for i, w := range wl.Warehouses {
@@ -299,7 +349,7 @@ func (m *ShipmentsManager) WriteForDate(ctx context.Context, day time.Time) erro
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			res := result{warehouseID: whID, warehouseName: whName}
+			res := warehouseCSV{warehouseID: whID, warehouseName: whName}
 			code, err := m.api.createPostingsReport(reportFromUTC, reportToUTC, whID)
 			if err != nil {
 				res.err = fmt.Errorf("warehouse %d %q: create report: %w", whID, whName, err)
@@ -318,7 +368,7 @@ func (m *ShipmentsManager) WriteForDate(ctx context.Context, day time.Time) erro
 				results[i] = res
 				return
 			}
-			header, rows, err := parseShipmentCSV(data, shipFrom, shipTo, msk)
+			header, rows, err := parseShipmentCSV(data)
 			if err != nil {
 				res.err = fmt.Errorf("warehouse %d %q: parse csv: %w", whID, whName, err)
 				results[i] = res
@@ -326,11 +376,30 @@ func (m *ShipmentsManager) WriteForDate(ctx context.Context, day time.Time) erro
 			}
 			res.header = header
 			res.rows = rows
-			log.Printf("ozonShipments: cabinet=%d warehouse=%d %q rows=%d", m.cabinetID, whID, whName, len(rows))
 			results[i] = res
 		}(i, w.WarehouseID, w.Name)
 	}
 	wg.Wait()
+	return results, nil
+}
+
+// WriteForDate качает по отчёту на каждый склад кабинета за окно [day, day+1) MSK
+// и пишет все строки в один лист, добавляя колонку с ID склада.
+func (m *ShipmentsManager) WriteForDate(ctx context.Context, day time.Time) error {
+	msk := day.Location()
+	shipFrom := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, msk)
+	shipTo := shipFrom.AddDate(0, 0, 1)
+	reportFromUTC := shipFrom.Add(-shipmentsReportLookback).UTC()
+	reportToUTC := shipTo.Add(shipmentsReportTail).UTC()
+
+	results, err := m.fetchWarehouseCSVs(ctx, reportFromUTC, reportToUTC)
+	if err != nil {
+		return err
+	}
+	if len(results) == 0 {
+		log.Printf("ozonShipments: cabinet=%d no warehouses, skip", m.cabinetID)
+		return nil
+	}
 
 	var (
 		header  []string
@@ -342,11 +411,17 @@ func (m *ShipmentsManager) WriteForDate(ctx context.Context, day time.Time) erro
 			errs = append(errs, r.err.Error())
 			continue
 		}
+		shipmentRows, err := filterRowsByDateColumn(r.header, r.rows, shipmentsDateColumn, shipFrom, shipTo, msk)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("warehouse %d %q: filter shipment: %v", r.warehouseID, r.warehouseName, err))
+			continue
+		}
+		log.Printf("ozonShipments: cabinet=%d warehouse=%d %q shipped=%d", m.cabinetID, r.warehouseID, r.warehouseName, len(shipmentRows))
 		if header == nil && r.header != nil {
 			header = r.header
 		}
 		whID := "'" + strconv.Itoa(r.warehouseID)
-		for _, row := range r.rows {
+		for _, row := range shipmentRows {
 			allRows = append(allRows, append([]string{whID}, row...))
 		}
 	}
@@ -357,6 +432,63 @@ func (m *ShipmentsManager) WriteForDate(ctx context.Context, day time.Time) erro
 		if err := m.upload(title, fullHeader, allRows); err != nil {
 			errs = append(errs, err.Error())
 		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("cabinet=%d: %s", m.cabinetID, strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+// WriteAggregatedForDate выгружает в общий лист «Все отгрузки Ozon» все строки
+// CSV-отчёта, у которых колонка «Принят в обработку» попадает в окно
+// [day + 17h, day + 41h) MSK. Склад из excludedWHs пропускается.
+func (m *ShipmentsManager) WriteAggregatedForDate(ctx context.Context, day time.Time) error {
+	if m.allSpreadsheetID == "" {
+		return nil
+	}
+	msk := day.Location()
+	winFrom := time.Date(day.Year(), day.Month(), day.Day(), aggregatedCutoffHour, 0, 0, 0, msk)
+	winTo := winFrom.Add(24 * time.Hour)
+	reportFromUTC := winFrom.Add(-shipmentsReportLookback).UTC()
+	reportToUTC := winTo.Add(shipmentsReportTail).UTC()
+
+	results, err := m.fetchWarehouseCSVs(ctx, reportFromUTC, reportToUTC)
+	if err != nil {
+		return err
+	}
+	if len(results) == 0 {
+		log.Printf("ozonShipmentsAll: cabinet=%d no warehouses, skip", m.cabinetID)
+		return nil
+	}
+
+	var (
+		aggregatedRows [][]string
+		errs           []string
+	)
+	for _, r := range results {
+		if r.err != nil {
+			errs = append(errs, r.err.Error())
+			continue
+		}
+		if _, skip := m.excludedWHs[r.warehouseID]; skip {
+			continue
+		}
+		inProcessRows, err := filterRowsByDateColumn(r.header, r.rows, shipmentsInProcessColumn, winFrom, winTo, msk)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("warehouse %d %q: filter in-process: %v", r.warehouseID, r.warehouseName, err))
+			continue
+		}
+		kept, dropped := dropCancelledNotShipped(r.header, inProcessRows)
+		log.Printf("ozonShipmentsAll: cabinet=%d warehouse=%d %q in_process=%d kept=%d cancelled_unshipped=%d", m.cabinetID, r.warehouseID, r.warehouseName, len(inProcessRows), len(kept), dropped)
+		whID := "'" + strconv.Itoa(r.warehouseID)
+		for _, row := range kept {
+			aggregatedRows = append(aggregatedRows, append([]string{whID}, row...))
+		}
+	}
+
+	if err := m.uploadAggregated(aggregatedRows, winFrom); err != nil {
+		errs = append(errs, err.Error())
 	}
 
 	if len(errs) > 0 {
@@ -384,6 +516,33 @@ func (m *ShipmentsManager) upload(title string, header []string, rows [][]string
 	}
 	log.Printf("ozonShipments: cabinet=%d sheet=%q rows=%d", m.cabinetID, title, len(rows))
 	return nil
+}
+
+func (m *ShipmentsManager) uploadAggregated(rows [][]string, day time.Time) error {
+	if m.allSpreadsheetID == "" || len(rows) == 0 {
+		return nil
+	}
+	const title = "Все заказы Ozon"
+	if _, err := m.sheets.EnsureSheet(m.allSpreadsheetID, title); err != nil {
+		return fmt.Errorf("ensure aggregated %q: %w", title, err)
+	}
+	values := make([][]interface{}, 0, len(rows))
+	for _, r := range rows {
+		values = append(values, toIface(r))
+	}
+	r, g, b := aggregatedDayColor(day)
+	if err := m.sheets.AppendColored(m.allSpreadsheetID, title, values, r, g, b); err != nil {
+		return fmt.Errorf("append aggregated %q: %w", title, err)
+	}
+	log.Printf("ozonShipments: cabinet=%d aggregated rows=%d", m.cabinetID, len(rows))
+	return nil
+}
+
+func aggregatedDayColor(day time.Time) (r, g, b float64) {
+	if day.Day()%2 == 0 {
+		return 0.80, 0.80, 0.80
+	}
+	return 0.93, 0.93, 0.93
 }
 
 func toIface(row []string) []interface{} {

@@ -26,7 +26,22 @@ const (
 	wbStatusBatch          = 1000
 	wbOrdersWindowDaysBack = 60
 	wbOrdersWindowFw       = 1
+	// aggregatedCutoffHour: окно агрегированного листа смещено на этот час MSK.
+	// Для day = yyyy-mm-dd 00:00 MSK реальное окно: [day + 17h, day + 41h).
+	// Cron при этом срабатывает в 18:00 MSK — это часовая «дельта», даём WB/Ozon
+	// время отдать актуальные данные.
+	aggregatedCutoffHour = 17
 )
+
+// wbCancelledWbStatuses — значения wbStatus (системный статус Wildberries),
+// при которых заказ считается отменённым.
+var wbCancelledWbStatuses = map[string]struct{}{
+	"canceled":            {},
+	"canceled_by_client":  {},
+	"declined_by_client":  {},
+	"defect":              {},
+	"canceled_by_carrier": {},
+}
 
 var wbSupplierStatusRu = map[string]string{
 	"new":       "Новое",
@@ -205,6 +220,48 @@ func (a wbShipmentsAPI) orderIDsBySupply(ctx context.Context, supplyID string) (
 	return r.IDs, nil
 }
 
+// listOrdersByDate возвращает все FBS-заказы кабинета с CreatedAt в [from, to).
+// В отличие от listOrdersInWindow здесь нет фильтра по заранее известным id —
+// нужен для агрегированного листа «все заказы за день».
+func (a wbShipmentsAPI) listOrdersByDate(ctx context.Context, from, to time.Time) ([]wbOrderFBS, error) {
+	var out []wbOrderFBS
+	const chunk = 29 * 24 * time.Hour
+	chunkTo := to
+	for chunkTo.After(from) {
+		chunkFrom := chunkTo.Add(-chunk)
+		if chunkFrom.Before(from) {
+			chunkFrom = from
+		}
+		next := 0
+		for {
+			params := url.Values{}
+			params.Set("limit", strconv.Itoa(wbOrdersLimit))
+			params.Set("next", strconv.Itoa(next))
+			params.Set("dateFrom", strconv.FormatInt(chunkFrom.Unix(), 10))
+			params.Set("dateTo", strconv.FormatInt(chunkTo.Unix(), 10))
+			data, err := a.do(ctx, http.MethodGet, "/api/v3/orders", params, nil)
+			if err != nil {
+				return nil, err
+			}
+			var r wbOrdersResp
+			if err := json.Unmarshal(data, &r); err != nil {
+				return nil, fmt.Errorf("decode orders: %w; body=%s", err, string(data))
+			}
+			for _, o := range r.Orders {
+				if !o.CreatedAt.Before(from) && o.CreatedAt.Before(to) {
+					out = append(out, o)
+				}
+			}
+			if len(r.Orders) < wbOrdersLimit || r.Next == 0 || r.Next == next {
+				break
+			}
+			next = r.Next
+		}
+		chunkTo = chunkFrom
+	}
+	return out, nil
+}
+
 func (a wbShipmentsAPI) listOrdersInWindow(ctx context.Context, from, to time.Time, wanted map[int]struct{}) (map[int]wbOrderFBS, error) {
 	out := make(map[int]wbOrderFBS, len(wanted))
 	const chunk = 29 * 24 * time.Hour // WB caps range at 30 days
@@ -274,8 +331,12 @@ func (a wbShipmentsAPI) stickers(ctx context.Context, ids []int) (map[int]string
 	return out, nil
 }
 
-func (a wbShipmentsAPI) statuses(ctx context.Context, ids []int) (map[int]string, error) {
-	out := make(map[int]string, len(ids))
+// statuses возвращает два соответствия orderID → статус: первое в русском виде
+// (по SupplierStatus, для отображения в листе), второе — сырой WbStatus (для
+// проверки отмен по системному статусу WB).
+func (a wbShipmentsAPI) statuses(ctx context.Context, ids []int) (supplierRu map[int]string, wb map[int]string, err error) {
+	supplierRu = make(map[int]string, len(ids))
+	wb = make(map[int]string, len(ids))
 	for i := 0; i < len(ids); i += wbStatusBatch {
 		end := i + wbStatusBatch
 		if end > len(ids) {
@@ -284,31 +345,34 @@ func (a wbShipmentsAPI) statuses(ctx context.Context, ids []int) (map[int]string
 		body := map[string]any{"orders": ids[i:end]}
 		data, err := a.do(ctx, http.MethodPost, "/api/v3/orders/status", nil, body)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		var r wbStatusesResp
 		if err := json.Unmarshal(data, &r); err != nil {
-			return nil, fmt.Errorf("decode statuses: %w; body=%s", err, string(data))
+			return nil, nil, fmt.Errorf("decode statuses: %w; body=%s", err, string(data))
 		}
 		for _, o := range r.Orders {
 			if ru, ok := wbSupplierStatusRu[o.SupplierStatus]; ok {
-				out[o.ID] = ru
+				supplierRu[o.ID] = ru
 			} else {
-				out[o.ID] = o.SupplierStatus
+				supplierRu[o.ID] = o.SupplierStatus
 			}
+			wb[o.ID] = o.WbStatus
 		}
 	}
-	return out, nil
+	return supplierRu, wb, nil
 }
 
 // ShipmentsManager заливает FBS-отгрузки WB кабинета за выбранную дату в один
 // лист Google Sheets. ID склада пишется в отдельный столбец.
 type ShipmentsManager struct {
-	api           wbShipmentsAPI
-	sheets        google.SheetsService
-	spreadsheetID string
-	cabinetID     int
-	cabinetName   string
+	api              wbShipmentsAPI
+	sheets           google.SheetsService
+	spreadsheetID    string
+	allSpreadsheetID string
+	excludedWHs      map[int]struct{}
+	cabinetID        int
+	cabinetName      string
 }
 
 func NewShipmentsManager(cabinet tradeplus.Cabinet) (*ShipmentsManager, error) {
@@ -318,12 +382,20 @@ func NewShipmentsManager(cabinet tradeplus.Cabinet) (*ShipmentsManager, error) {
 	if cabinet.Settings.ShipmentsSheetID == "" {
 		return nil, fmt.Errorf("cabinet %d: empty shipmentsSheetId", cabinet.ID)
 	}
+	excluded := map[int]struct{}{}
+	for _, s := range cabinet.Settings.ExcludedShipmentsWarehouseIDs {
+		if id, err := strconv.Atoi(s); err == nil {
+			excluded[id] = struct{}{}
+		}
+	}
 	return &ShipmentsManager{
-		api:           newWBShipmentsAPI(cabinet.Key),
-		sheets:        google.NewSheetsService("pkg/client/google/token.json", "pkg/client/google/credentials.json"),
-		spreadsheetID: cabinet.Settings.ShipmentsSheetID,
-		cabinetID:     cabinet.ID,
-		cabinetName:   cabinet.Name,
+		api:              newWBShipmentsAPI(cabinet.Key),
+		sheets:           google.NewSheetsService("pkg/client/google/token.json", "pkg/client/google/credentials.json"),
+		spreadsheetID:    cabinet.Settings.ShipmentsSheetID,
+		allSpreadsheetID: cabinet.Settings.ShipmentsAllSheetID,
+		excludedWHs:      excluded,
+		cabinetID:        cabinet.ID,
+		cabinetName:      cabinet.Name,
 	}, nil
 }
 
@@ -373,7 +445,7 @@ func (m *ShipmentsManager) WriteForDate(ctx context.Context, day time.Time) erro
 	if err != nil {
 		return fmt.Errorf("stickers: %w", err)
 	}
-	statusMap, err := m.api.statuses(ctx, allOrderIDs)
+	statusMap, _, err := m.api.statuses(ctx, allOrderIDs)
 	if err != nil {
 		return fmt.Errorf("statuses: %w", err)
 	}
@@ -399,6 +471,87 @@ func (m *ShipmentsManager) WriteForDate(ctx context.Context, day time.Time) erro
 		return fmt.Errorf("cabinet=%d: %w", m.cabinetID, err)
 	}
 	return nil
+}
+
+// WriteAggregatedForDate выгружает в общий лист «Все отгрузки WB» все заказы
+// с CreatedAt в [day + 17h, day + 41h) MSK (т.е. со вчера 17:00 по сегодня 17:00,
+// если day — yesterday 00:00 MSK), независимо от наличия supply.
+func (m *ShipmentsManager) WriteAggregatedForDate(ctx context.Context, day time.Time) error {
+	loc := day.Location()
+	if m.allSpreadsheetID == "" {
+		return nil
+	}
+	dayStart := time.Date(day.Year(), day.Month(), day.Day(), aggregatedCutoffHour, 0, 0, 0, loc)
+	dayEnd := dayStart.Add(24 * time.Hour)
+
+	allOrders, err := m.api.listOrdersByDate(ctx, dayStart, dayEnd)
+	if err != nil {
+		return fmt.Errorf("list orders by date: %w", err)
+	}
+	if len(allOrders) == 0 {
+		return nil
+	}
+
+	ids := make([]int, 0, len(allOrders))
+	ordersByID := make(map[int]wbOrderFBS, len(allOrders))
+	for _, o := range allOrders {
+		ids = append(ids, o.ID)
+		ordersByID[o.ID] = o
+	}
+
+	stickerMap, err := m.api.stickers(ctx, ids)
+	if err != nil {
+		return fmt.Errorf("stickers: %w", err)
+	}
+	statusMap, wbStatusMap, err := m.api.statuses(ctx, ids)
+	if err != nil {
+		return fmt.Errorf("statuses: %w", err)
+	}
+
+	// Выкидываем отменённые заказы, которые ещё не отгружены:
+	// wbStatus ∈ {canceled, canceled_by_client, declined_by_client, defect,
+	// canceled_by_carrier} и при этом нет назначенной supply.
+	filteredIDs := make([]int, 0, len(ids))
+	dropped := 0
+	for _, id := range ids {
+		if isWBCancelledNotShipped(ordersByID[id], wbStatusMap[id]) {
+			dropped++
+			continue
+		}
+		filteredIDs = append(filteredIDs, id)
+	}
+	log.Printf("wbShipmentsAll: cabinet=%d orders=%d kept=%d cancelled_unshipped=%d", m.cabinetID, len(ids), len(filteredIDs), dropped)
+
+	byWh := map[int][]int{}
+	for _, id := range filteredIDs {
+		wh := ordersByID[id].WarehouseID
+		byWh[wh] = append(byWh[wh], id)
+	}
+	whIDs := make([]int, 0, len(byWh))
+	for wh := range byWh {
+		whIDs = append(whIDs, wh)
+	}
+	sort.Ints(whIDs)
+
+	emptySupplies := map[int]*wbSupply{}
+	var rows [][]string
+	for _, wh := range whIDs {
+		if _, skip := m.excludedWHs[wh]; skip {
+			continue
+		}
+		rows = append(rows, buildWBRows(byWh[wh], emptySupplies, ordersByID, stickerMap, statusMap, loc)...)
+	}
+	return m.uploadAggregated(rows, day)
+}
+
+// isWBCancelledNotShipped — у заказа системный статус WB говорит об отмене и
+// при этом нет назначенной supply, т.е. фактически отгрузки не было.
+func isWBCancelledNotShipped(o wbOrderFBS, wbStatus string) bool {
+	if o.SupplyID != "" {
+		return false
+	}
+	_, cancelled := wbCancelledWbStatuses[wbStatus]
+	return cancelled
 }
 
 func buildWBRows(orderIDs []int, orderToSupply map[int]*wbSupply, orders map[int]wbOrderFBS, stickerMap, statusMap map[int]string, loc *time.Location) [][]string {
@@ -481,6 +634,33 @@ func (m *ShipmentsManager) upload(title string, header []string, rows [][]string
 	}
 	log.Printf("wbShipments: cabinet=%d sheet=%q rows=%d", m.cabinetID, title, len(rows))
 	return nil
+}
+
+func (m *ShipmentsManager) uploadAggregated(rows [][]string, day time.Time) error {
+	if m.allSpreadsheetID == "" || len(rows) == 0 {
+		return nil
+	}
+	const title = "Все заказы WB"
+	if _, err := m.sheets.EnsureSheet(m.allSpreadsheetID, title); err != nil {
+		return fmt.Errorf("ensure aggregated %q: %w", title, err)
+	}
+	values := make([][]interface{}, 0, len(rows))
+	for _, r := range rows {
+		values = append(values, toIface(r))
+	}
+	r, g, b := aggregatedDayColor(day)
+	if err := m.sheets.AppendColored(m.allSpreadsheetID, title, values, r, g, b); err != nil {
+		return fmt.Errorf("append aggregated %q: %w", title, err)
+	}
+	log.Printf("wbShipments: cabinet=%d aggregated rows=%d", m.cabinetID, len(rows))
+	return nil
+}
+
+func aggregatedDayColor(day time.Time) (r, g, b float64) {
+	if day.Day()%2 == 0 {
+		return 0.80, 0.80, 0.80
+	}
+	return 0.93, 0.93, 0.93
 }
 
 func toIface(row []string) []interface{} {

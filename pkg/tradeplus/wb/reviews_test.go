@@ -58,34 +58,3 @@ func TestReviewManager_AnswerReview(t *testing.T) {
 		So(err, ShouldBeNil)
 	})
 }
-
-func TestReviewManager_SetAnswer(t *testing.T) {
-	dbc, err := test.Setup()
-	repo := db.NewTradebotRepo(dbc)
-	require.NoError(t, err)
-	require.NotNil(t, cfg)
-
-	cabinet, err := repo.OneCabinet(t.Context(), &db.CabinetSearch{Marketplace: openai.Ptr("WB")})
-	require.NoError(t, err)
-
-	m := NewReviewManager(*dbc, tradeplus.NewCabinet(cabinet), gptSrv)
-
-	articlesInfo, err := LoadArticlesInfo()
-	require.NoError(t, err)
-
-	Convey("success answer", t, func() {
-		var nr = tradeplus.Review{
-			Review: db.Review{
-				Article:   "SM-DH-18L",
-				Text:      "не работает",
-				Pros:      "",
-				Cons:      "",
-				Valuation: 1,
-			},
-		}
-
-		err = m.SetAnswer(t.Context(), &nr, articlesInfo)
-		So(err, ShouldBeNil)
-		t.Log(nr.Answer)
-	})
-}

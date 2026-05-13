@@ -109,6 +109,36 @@ func (s *Manager) WriteOzonShipments(ctx context.Context) error {
 	return nil
 }
 
+func (s *Manager) WriteOzonShipmentsAll(ctx context.Context) error {
+	cabinets, err := s.tm.GetCabinetsByMp(ctx, db.MarketOzon)
+	if err != nil {
+		return err
+	}
+
+	msk := time.FixedZone("MSK", 3*3600)
+	now := time.Now().In(msk).AddDate(0, 0, -tradeplus.OrdersDaysAgo)
+	yesterday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, msk)
+
+	var failed []string
+	for _, cab := range cabinets {
+		if cab.Settings.ShipmentsAllSheetID == "" {
+			continue
+		}
+		m, err := ozon.NewShipmentsManager(cab)
+		if err != nil {
+			failed = append(failed, fmt.Sprintf("cab=%d init: %v", cab.ID, err))
+			continue
+		}
+		if err := m.WriteAggregatedForDate(ctx, yesterday); err != nil {
+			failed = append(failed, err.Error())
+		}
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("ozonShipmentsAll: %s", strings.Join(failed, "; "))
+	}
+	return nil
+}
+
 func (s *Manager) WriteWBShipments(ctx context.Context) error {
 	cabinets, err := s.tm.GetCabinetsByMp(ctx, db.MarketWB)
 	if err != nil {
@@ -136,6 +166,36 @@ func (s *Manager) WriteWBShipments(ctx context.Context) error {
 	}
 	if len(failed) > 0 {
 		return fmt.Errorf("wbShipments: %s", strings.Join(failed, "; "))
+	}
+	return nil
+}
+
+func (s *Manager) WriteWBShipmentsAll(ctx context.Context) error {
+	cabinets, err := s.tm.GetCabinetsByMp(ctx, db.MarketWB)
+	if err != nil {
+		return err
+	}
+
+	msk := time.FixedZone("MSK", 3*3600)
+	now := time.Now().In(msk).AddDate(0, 0, -tradeplus.OrdersDaysAgo)
+	yesterday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, msk)
+
+	var failed []string
+	for _, cab := range cabinets {
+		if cab.Settings.ShipmentsAllSheetID == "" {
+			continue
+		}
+		m, err := wb.NewShipmentsManager(cab)
+		if err != nil {
+			failed = append(failed, fmt.Sprintf("cab=%d init: %v", cab.ID, err))
+			continue
+		}
+		if err := m.WriteAggregatedForDate(ctx, yesterday); err != nil {
+			failed = append(failed, err.Error())
+		}
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("wbShipmentsAll: %s", strings.Join(failed, "; "))
 	}
 	return nil
 }

@@ -103,7 +103,6 @@ func (c Client) getOrdersBySupplyID(supplyID string) (string, error) {
 }
 
 func (c Client) getReturns(dateFrom, dateTo string) (string, error) {
-
 	params := url.Values{}
 	params.Add("dateFrom", dateFrom)
 	params.Add("dateTo", dateTo)
