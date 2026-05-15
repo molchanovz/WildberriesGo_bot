@@ -68,6 +68,8 @@ func (m *Manager) RegisterBotHandlers() {
 	m.b.RegisterHandler(botlib.HandlerTypeCallbackQueryData, CallbackChangeAPIHandler, botlib.MatchTypePrefix, m.ChangeApiHandler)
 	m.b.RegisterHandler(botlib.HandlerTypeCallbackQueryData, CallbackChangeSheetHandler, botlib.MatchTypePrefix, m.ChangeSheetHandler)
 
+	m.b.RegisterHandler(botlib.HandlerTypeCallbackQueryData, CallbackShipmentsAllHandler, botlib.MatchTypeExact, m.shipmentsAllHandler)
+
 	m.b.RegisterHandler(botlib.HandlerTypeCallbackQueryData, CallbackWbHandler, botlib.MatchTypeExact, wbHandler)
 	m.b.RegisterHandler(botlib.HandlerTypeCallbackQueryData, CallbackYandexHandler, botlib.MatchTypeExact, m.yandexHandler)
 	m.b.RegisterHandler(botlib.HandlerTypeCallbackQueryData, CallbackOzonHandler, botlib.MatchTypeExact, m.ozonHandler)
@@ -167,7 +169,10 @@ func createStartAdminMarkup() (string, models.InlineKeyboardMarkup) {
 	buttonsRow = append(buttonsRow, models.InlineKeyboardButton{Text: "ВБ", CallbackData: CallbackWbHandler})
 	buttonsRow = append(buttonsRow, models.InlineKeyboardButton{Text: "ЯНДЕКС", CallbackData: CallbackYandexHandler})
 	buttonsRow = append(buttonsRow, models.InlineKeyboardButton{Text: "ОЗОН", CallbackData: CallbackOzonHandler})
-	allButtons := [][]models.InlineKeyboardButton{buttonsRow}
+	shipmentsRow := []models.InlineKeyboardButton{
+		{Text: "Заполнить заказы WB+Ozon", CallbackData: CallbackShipmentsAllHandler},
+	}
+	allButtons := [][]models.InlineKeyboardButton{buttonsRow, shipmentsRow}
 	markup := models.InlineKeyboardMarkup{InlineKeyboard: allButtons}
 	return startMessage, markup
 }
