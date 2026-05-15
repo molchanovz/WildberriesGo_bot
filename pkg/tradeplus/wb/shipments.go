@@ -483,7 +483,13 @@ func (m *ShipmentsManager) WriteAggregatedForDate(ctx context.Context, day time.
 		return nil
 	}
 	newFrom := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, loc)
-	newTo := newFrom.AddDate(0, 0, 1)
+	// newTo = момент запуска (cron или нажатие кнопки), чтобы захватить
+	// заказы, появившиеся уже сегодня. Идемпотентность держит дедуп
+	// по № задания в ClearRowsAndAppendColored.
+	newTo := time.Now().In(loc)
+	if newTo.Before(newFrom.AddDate(0, 0, 1)) {
+		newTo = newFrom.AddDate(0, 0, 1)
+	}
 	lookbackFrom := newFrom.AddDate(0, 0, -(aggregatedLookbackDays - 1))
 
 	allOrders, err := m.api.listOrdersByDate(ctx, lookbackFrom, newTo)

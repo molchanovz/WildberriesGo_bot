@@ -459,7 +459,13 @@ func (m *ShipmentsManager) WriteAggregatedForDate(ctx context.Context, day time.
 	}
 	msk := day.Location()
 	newFrom := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, msk)
-	newTo := newFrom.AddDate(0, 0, 1)
+	// newTo = момент запуска (cron или нажатие кнопки), чтобы захватить
+	// заказы, появившиеся уже сегодня. Идемпотентность держит дедуп
+	// по «Номеру отправления» в ClearRowsAndAppendColored.
+	newTo := time.Now().In(msk)
+	if newTo.Before(newFrom.AddDate(0, 0, 1)) {
+		newTo = newFrom.AddDate(0, 0, 1)
+	}
 	lookbackFrom := newFrom.AddDate(0, 0, -(aggregatedLookbackDays - 1))
 	reportFromUTC := lookbackFrom.Add(-shipmentsReportLookback).UTC()
 	reportToUTC := newTo.Add(shipmentsReportTail).UTC()
