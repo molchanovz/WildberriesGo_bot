@@ -26,11 +26,10 @@ const (
 	wbStatusBatch          = 1000
 	wbOrdersWindowDaysBack = 60
 	wbOrdersWindowFw       = 1
-	// aggregatedCutoffHour: окно агрегированного листа смещено на этот час MSK.
-	// Для day = yyyy-mm-dd 00:00 MSK реальное окно: [day + 17h, day + 41h).
-	// Cron при этом срабатывает в 18:00 MSK — это часовая «дельта», даём WB/Ozon
-	// время отдать актуальные данные.
-	aggregatedCutoffHour = 17
+	// aggregatedLookbackDays: на сколько суток назад от day перечитываем заказы
+	// для агрегированного листа. Нужно, чтобы заказ, отменённый через 1–7 дней
+	// после создания, был удалён с листа.
+	aggregatedLookbackDays = 7
 )
 
 // wbCancelledWbStatuses — значения wbStatus (системный статус Wildberries),
@@ -473,18 +472,21 @@ func (m *ShipmentsManager) WriteForDate(ctx context.Context, day time.Time) erro
 	return nil
 }
 
-// WriteAggregatedForDate выгружает в общий лист «Все отгрузки WB» все заказы
-// с CreatedAt в [day + 17h, day + 41h) MSK (т.е. со вчера 17:00 по сегодня 17:00,
-// если day — yesterday 00:00 MSK), независимо от наличия supply.
+// WriteAggregatedForDate синхронизирует общий лист «Все заказы WB»:
+//   - новые заказы за вчерашние сутки [day, day+1) MSK дописываются в конец;
+//   - отменённые-неотгруженные заказы за окно [day-6д, day+1) MSK удаляются с листа.
+//
+// day обычно = yesterday 00:00 MSK.
 func (m *ShipmentsManager) WriteAggregatedForDate(ctx context.Context, day time.Time) error {
 	loc := day.Location()
 	if m.allSpreadsheetID == "" {
 		return nil
 	}
-	dayStart := time.Date(day.Year(), day.Month(), day.Day(), aggregatedCutoffHour, 0, 0, 0, loc)
-	dayEnd := dayStart.Add(24 * time.Hour)
+	newFrom := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, loc)
+	newTo := newFrom.AddDate(0, 0, 1)
+	lookbackFrom := newFrom.AddDate(0, 0, -(aggregatedLookbackDays - 1))
 
-	allOrders, err := m.api.listOrdersByDate(ctx, dayStart, dayEnd)
+	allOrders, err := m.api.listOrdersByDate(ctx, lookbackFrom, newTo)
 	if err != nil {
 		return fmt.Errorf("list orders by date: %w", err)
 	}
@@ -499,49 +501,61 @@ func (m *ShipmentsManager) WriteAggregatedForDate(ctx context.Context, day time.
 		ordersByID[o.ID] = o
 	}
 
-	stickerMap, err := m.api.stickers(ctx, ids)
-	if err != nil {
-		return fmt.Errorf("stickers: %w", err)
-	}
-	statusMap, wbStatusMap, err := m.api.statuses(ctx, ids)
+	_, wbStatusMap, err := m.api.statuses(ctx, ids)
 	if err != nil {
 		return fmt.Errorf("statuses: %w", err)
 	}
 
-	// Выкидываем отменённые заказы, которые ещё не отгружены:
-	// wbStatus ∈ {canceled, canceled_by_client, declined_by_client, defect,
-	// canceled_by_carrier} и при этом нет назначенной supply.
-	filteredIDs := make([]int, 0, len(ids))
-	dropped := 0
+	// Заказы делим на:
+	//  - clearKeys: отменённые и не отгруженные за всё окно lookback — удаляем с листа;
+	//  - newIDs: все остальные заказы за окно lookback — кандидаты на append.
+	//    Дубли отсекает DeleteRowsAndAppendColored, сравнивая № задания с ключами,
+	//    уже присутствующими на листе. Так восстанавливаются пропуски, если cron
+	//    не сработал в прошлые сутки.
+	var clearKeys []string
+	var newIDs []int
 	for _, id := range ids {
-		if isWBCancelledNotShipped(ordersByID[id], wbStatusMap[id]) {
-			dropped++
+		o := ordersByID[id]
+		if isWBCancelledNotShipped(o, wbStatusMap[id]) {
+			clearKeys = append(clearKeys, strconv.Itoa(id))
 			continue
 		}
-		filteredIDs = append(filteredIDs, id)
+		if _, skip := m.excludedWHs[o.WarehouseID]; skip {
+			continue
+		}
+		newIDs = append(newIDs, id)
 	}
-	log.Printf("wbShipmentsAll: cabinet=%d orders=%d kept=%d cancelled_unshipped=%d", m.cabinetID, len(ids), len(filteredIDs), dropped)
+	log.Printf("wbShipmentsAll: cabinet=%d orders=%d candidates=%d to_clear=%d",
+		m.cabinetID, len(ids), len(newIDs), len(clearKeys))
 
-	byWh := map[int][]int{}
-	for _, id := range filteredIDs {
-		wh := ordersByID[id].WarehouseID
-		byWh[wh] = append(byWh[wh], id)
-	}
-	whIDs := make([]int, 0, len(byWh))
-	for wh := range byWh {
-		whIDs = append(whIDs, wh)
-	}
-	sort.Ints(whIDs)
-
-	emptySupplies := map[int]*wbSupply{}
 	var rows [][]string
-	for _, wh := range whIDs {
-		if _, skip := m.excludedWHs[wh]; skip {
-			continue
+	if len(newIDs) > 0 {
+		stickerMap, err := m.api.stickers(ctx, newIDs)
+		if err != nil {
+			return fmt.Errorf("stickers: %w", err)
 		}
-		rows = append(rows, buildWBRows(byWh[wh], emptySupplies, ordersByID, stickerMap, statusMap, loc)...)
+		statusMap, _, err := m.api.statuses(ctx, newIDs)
+		if err != nil {
+			return fmt.Errorf("statuses for new: %w", err)
+		}
+
+		byWh := map[int][]int{}
+		for _, id := range newIDs {
+			wh := ordersByID[id].WarehouseID
+			byWh[wh] = append(byWh[wh], id)
+		}
+		whIDs := make([]int, 0, len(byWh))
+		for wh := range byWh {
+			whIDs = append(whIDs, wh)
+		}
+		sort.Ints(whIDs)
+
+		emptySupplies := map[int]*wbSupply{}
+		for _, wh := range whIDs {
+			rows = append(rows, buildWBRows(byWh[wh], emptySupplies, ordersByID, stickerMap, statusMap, loc)...)
+		}
 	}
-	return m.uploadAggregated(rows, day)
+	return m.uploadAggregated(rows, clearKeys, day)
 }
 
 // isWBCancelledNotShipped — у заказа системный статус WB говорит об отмене и
@@ -636,8 +650,11 @@ func (m *ShipmentsManager) upload(title string, header []string, rows [][]string
 	return nil
 }
 
-func (m *ShipmentsManager) uploadAggregated(rows [][]string, day time.Time) error {
-	if m.allSpreadsheetID == "" || len(rows) == 0 {
+func (m *ShipmentsManager) uploadAggregated(rows [][]string, clearKeys []string, day time.Time) error {
+	if m.allSpreadsheetID == "" {
+		return nil
+	}
+	if len(rows) == 0 && len(clearKeys) == 0 {
 		return nil
 	}
 	const title = "Все заказы WB"
@@ -649,10 +666,14 @@ func (m *ShipmentsManager) uploadAggregated(rows [][]string, day time.Time) erro
 		values = append(values, toIface(r))
 	}
 	r, g, b := aggregatedDayColor(day)
-	if err := m.sheets.AppendColored(m.allSpreadsheetID, title, values, r, g, b); err != nil {
-		return fmt.Errorf("append aggregated %q: %w", title, err)
+	// keyColumn = 0 — первая колонка в buildWBRows это orderID (см. wbHeader: "№ задания").
+	// preserveColumns = [15] (P) — ручная формула, не стираем при отмене.
+	// skipColorColumns = [12,13,15] (M,N,P) — фон не красим.
+	cleared, appended, err := m.sheets.ClearRowsAndAppendColored(m.allSpreadsheetID, title, 0, []int{15}, []int{12, 13, 15}, values, clearKeys, r, g, b)
+	if err != nil {
+		return fmt.Errorf("sync aggregated %q: %w", title, err)
 	}
-	log.Printf("wbShipments: cabinet=%d aggregated rows=%d", m.cabinetID, len(rows))
+	log.Printf("wbShipments: cabinet=%d aggregated cleared=%d appended=%d", m.cabinetID, cleared, appended)
 	return nil
 }
 

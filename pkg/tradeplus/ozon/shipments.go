@@ -20,19 +20,19 @@ import (
 )
 
 const (
-	shipmentsReportLookback  = 30 * 24 * time.Hour
-	shipmentsReportTail      = 2 * 24 * time.Hour
-	shipmentsReportTimeout   = 10 * time.Minute
-	shipmentsParallelism     = 4
-	shipmentsDateColumn      = "Фактическая дата передачи в доставку"
-	shipmentsInProcessColumn = "Принят в обработку"
-	shipmentsStatusColumn    = "Статус"
-	shipmentsWarehouseColumn = "ID склада"
-	// aggregatedCutoffHour: окно агрегированного листа смещено на этот час MSK.
-	// Для day = yyyy-mm-dd 00:00 MSK реальное окно: [day + 17h, day + 41h).
-	// Cron при этом срабатывает в 18:00 MSK — это часовая «дельта», даём WB/Ozon
-	// время отдать актуальные данные.
-	aggregatedCutoffHour = 17
+	shipmentsReportLookback      = 30 * 24 * time.Hour
+	shipmentsReportTail          = 2 * 24 * time.Hour
+	shipmentsReportTimeout       = 10 * time.Minute
+	shipmentsParallelism         = 4
+	shipmentsDateColumn          = "Фактическая дата передачи в доставку"
+	shipmentsInProcessColumn     = "Принят в обработку"
+	shipmentsStatusColumn        = "Статус"
+	shipmentsWarehouseColumn     = "ID склада"
+	shipmentsPostingNumberColumn = "Номер отправления"
+	// aggregatedLookbackDays: на сколько суток назад от day перечитываем CSV-отчёт
+	// для агрегированного листа. Нужно, чтобы заказ, отменённый через 1–7 дней
+	// после создания, был удалён с листа.
+	aggregatedLookbackDays = 7
 )
 
 // ozonReportAPI — лёгкая обёртка вокруг Ozon report endpoints.
@@ -223,17 +223,21 @@ func findColumn(header []string, name string) int {
 	return -1
 }
 
-// dropCancelledNotShipped выкидывает строки, у которых статус содержит «отмен»
-// (Отменён/Отменено/...), а колонка с фактической датой передачи в доставку пустая.
-// Возвращает (отфильтрованные строки, сколько выкинуто).
-func dropCancelledNotShipped(header []string, rows [][]string) ([][]string, int) {
+// splitCancelledNotShipped делит строки CSV-отчёта на две группы:
+//   - kept: всё, что не «отменён + не отгружен»;
+//   - cancelledKeys: номера отправлений (значения колонки «Номер отправления»)
+//     строк, у которых статус содержит «отмен», а колонка фактической передачи
+//     в доставку пустая.
+//
+// Если ключевые колонки в header не найдены, всё уходит в kept.
+func splitCancelledNotShipped(header []string, rows [][]string) (kept [][]string, cancelledKeys []string) {
 	statusCol := findColumn(header, shipmentsStatusColumn)
 	shipCol := findColumn(header, shipmentsDateColumn)
+	postingCol := findColumn(header, shipmentsPostingNumberColumn)
 	if statusCol == -1 || shipCol == -1 {
-		return rows, 0
+		return rows, nil
 	}
-	out := make([][]string, 0, len(rows))
-	dropped := 0
+	kept = make([][]string, 0, len(rows))
 	for _, row := range rows {
 		status := ""
 		if statusCol < len(row) {
@@ -244,12 +248,16 @@ func dropCancelledNotShipped(header []string, rows [][]string) ([][]string, int)
 			ship = strings.TrimSpace(row[shipCol])
 		}
 		if ship == "" && strings.Contains(status, "отмен") {
-			dropped++
+			if postingCol >= 0 && postingCol < len(row) {
+				if k := strings.TrimSpace(row[postingCol]); k != "" {
+					cancelledKeys = append(cancelledKeys, k)
+				}
+			}
 			continue
 		}
-		out = append(out, row)
+		kept = append(kept, row)
 	}
-	return out, dropped
+	return kept, cancelledKeys
 }
 
 // filterRowsByDateColumn оставляет строки, у которых значение в колонке colName
@@ -440,18 +448,21 @@ func (m *ShipmentsManager) WriteForDate(ctx context.Context, day time.Time) erro
 	return nil
 }
 
-// WriteAggregatedForDate выгружает в общий лист «Все отгрузки Ozon» все строки
-// CSV-отчёта, у которых колонка «Принят в обработку» попадает в окно
-// [day + 17h, day + 41h) MSK. Склад из excludedWHs пропускается.
+// WriteAggregatedForDate синхронизирует общий лист «Все заказы Ozon»:
+//   - новые отправления за вчерашние сутки [day, day+1) MSK дописываются в конец;
+//   - отменённые-неотгруженные за окно [day-6д, day+1) MSK удаляются с листа.
+//
+// day обычно = yesterday 00:00 MSK. Склад из excludedWHs пропускается.
 func (m *ShipmentsManager) WriteAggregatedForDate(ctx context.Context, day time.Time) error {
 	if m.allSpreadsheetID == "" {
 		return nil
 	}
 	msk := day.Location()
-	winFrom := time.Date(day.Year(), day.Month(), day.Day(), aggregatedCutoffHour, 0, 0, 0, msk)
-	winTo := winFrom.Add(24 * time.Hour)
-	reportFromUTC := winFrom.Add(-shipmentsReportLookback).UTC()
-	reportToUTC := winTo.Add(shipmentsReportTail).UTC()
+	newFrom := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, msk)
+	newTo := newFrom.AddDate(0, 0, 1)
+	lookbackFrom := newFrom.AddDate(0, 0, -(aggregatedLookbackDays - 1))
+	reportFromUTC := lookbackFrom.Add(-shipmentsReportLookback).UTC()
+	reportToUTC := newTo.Add(shipmentsReportTail).UTC()
 
 	results, err := m.fetchWarehouseCSVs(ctx, reportFromUTC, reportToUTC)
 	if err != nil {
@@ -464,6 +475,7 @@ func (m *ShipmentsManager) WriteAggregatedForDate(ctx context.Context, day time.
 
 	var (
 		aggregatedRows [][]string
+		clearKeys      []string
 		errs           []string
 	)
 	for _, r := range results {
@@ -474,20 +486,39 @@ func (m *ShipmentsManager) WriteAggregatedForDate(ctx context.Context, day time.
 		if _, skip := m.excludedWHs[r.warehouseID]; skip {
 			continue
 		}
-		inProcessRows, err := filterRowsByDateColumn(r.header, r.rows, shipmentsInProcessColumn, winFrom, winTo, msk)
+		// За весь lookback-период: отменённые-неотгруженные → clearKeys,
+		// остальные → kept (кандидаты на append). Дубли отсекает
+		// DeleteRowsAndAppendColored по «Номеру отправления». Это восстанавливает
+		// пропуски, если cron не сработал в прошлые сутки.
+		lookbackRows, err := filterRowsByDateColumn(r.header, r.rows, shipmentsInProcessColumn, lookbackFrom, newTo, msk)
 		if err != nil {
-			errs = append(errs, fmt.Sprintf("warehouse %d %q: filter in-process: %v", r.warehouseID, r.warehouseName, err))
+			errs = append(errs, fmt.Sprintf("warehouse %d %q: filter lookback: %v", r.warehouseID, r.warehouseName, err))
 			continue
 		}
-		kept, dropped := dropCancelledNotShipped(r.header, inProcessRows)
-		log.Printf("ozonShipmentsAll: cabinet=%d warehouse=%d %q in_process=%d kept=%d cancelled_unshipped=%d", m.cabinetID, r.warehouseID, r.warehouseName, len(inProcessRows), len(kept), dropped)
+		kept, cancelledKeys := splitCancelledNotShipped(r.header, lookbackRows)
+		clearKeys = append(clearKeys, cancelledKeys...)
+
+		log.Printf("ozonShipmentsAll: cabinet=%d warehouse=%d %q lookback=%d candidates=%d cancelled_unshipped=%d",
+			m.cabinetID, r.warehouseID, r.warehouseName, len(lookbackRows), len(kept), len(cancelledKeys))
 		whID := "'" + strconv.Itoa(r.warehouseID)
 		for _, row := range kept {
 			aggregatedRows = append(aggregatedRows, append([]string{whID}, row...))
 		}
 	}
 
-	if err := m.uploadAggregated(aggregatedRows, winFrom); err != nil {
+	// keyColumn в строке листа = 1 (после "ID склада") + позиция «Номер отправления» в CSV header.
+	keyCol := -1
+	for _, r := range results {
+		if r.err == nil && r.header != nil {
+			if idx := findColumn(r.header, shipmentsPostingNumberColumn); idx >= 0 {
+				keyCol = 1 + idx
+				break
+			}
+		}
+	}
+	if keyCol < 0 {
+		errs = append(errs, fmt.Sprintf("колонка %q не найдена в CSV", shipmentsPostingNumberColumn))
+	} else if err := m.uploadAggregated(aggregatedRows, clearKeys, keyCol, newFrom); err != nil {
 		errs = append(errs, err.Error())
 	}
 
@@ -518,8 +549,11 @@ func (m *ShipmentsManager) upload(title string, header []string, rows [][]string
 	return nil
 }
 
-func (m *ShipmentsManager) uploadAggregated(rows [][]string, day time.Time) error {
-	if m.allSpreadsheetID == "" || len(rows) == 0 {
+func (m *ShipmentsManager) uploadAggregated(rows [][]string, clearKeys []string, keyColumn int, day time.Time) error {
+	if m.allSpreadsheetID == "" {
+		return nil
+	}
+	if len(rows) == 0 && len(clearKeys) == 0 {
 		return nil
 	}
 	const title = "Все заказы Ozon"
@@ -531,10 +565,13 @@ func (m *ShipmentsManager) uploadAggregated(rows [][]string, day time.Time) erro
 		values = append(values, toIface(r))
 	}
 	r, g, b := aggregatedDayColor(day)
-	if err := m.sheets.AppendColored(m.allSpreadsheetID, title, values, r, g, b); err != nil {
-		return fmt.Errorf("append aggregated %q: %w", title, err)
+	// preserveColumns = [30] (AE) — ручная формула, не стираем при отмене.
+	// skipColorColumns = [0,3,16,21,30] (A,D,Q,V,AE) — фон не красим.
+	cleared, appended, err := m.sheets.ClearRowsAndAppendColored(m.allSpreadsheetID, title, keyColumn, []int{30}, []int{0, 3, 16, 21, 30}, values, clearKeys, r, g, b)
+	if err != nil {
+		return fmt.Errorf("sync aggregated %q: %w", title, err)
 	}
-	log.Printf("ozonShipments: cabinet=%d aggregated rows=%d", m.cabinetID, len(rows))
+	log.Printf("ozonShipments: cabinet=%d aggregated cleared=%d appended=%d", m.cabinetID, cleared, appended)
 	return nil
 }
 
