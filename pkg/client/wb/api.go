@@ -174,21 +174,36 @@ func (c Client) GetOrdersFBS(dateFrom, dateTo int) (*OrdersListFBS, error) {
 		"Authorization": c.token,
 	}
 
-	params := map[string]string{
-		"limit":    "1000",
-		"next":     "0",
-		"dateFrom": strconv.Itoa(dateFrom),
-		"dateTo":   strconv.Itoa(dateTo),
+	var all OrdersListFBS
+	next := 0
+	for {
+		params := map[string]string{
+			"limit":    "1000",
+			"next":     strconv.Itoa(next),
+			"dateFrom": strconv.Itoa(dateFrom),
+			"dateTo":   strconv.Itoa(dateTo),
+		}
+
+		_, response, err := c.get(baseURL, headers, params, body)
+		if err != nil {
+			return nil, err
+		}
+
+		var page OrdersListFBS
+		if err := json.Unmarshal([]byte(response), &page); err != nil {
+			return nil, err
+		}
+
+		all.OrdersFBS = append(all.OrdersFBS, page.OrdersFBS...)
+		all.Next = page.Next
+
+		if page.Next == 0 || len(page.OrdersFBS) == 0 {
+			break
+		}
+		next = page.Next
 	}
 
-	_, response, err := c.get(baseURL, headers, params, body)
-	if err != nil {
-		return nil, err
-	}
-
-	var posting OrdersListFBS
-	err = json.Unmarshal([]byte(response), &posting)
-	return &posting, err
+	return &all, nil
 }
 
 func (c Client) ordersFBSStatus(orderID int) (string, error) {
