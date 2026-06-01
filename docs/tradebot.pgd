@@ -1,0 +1,255 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<pgd version="1" pg-version="18" default-schema="public">
+  <project name="tradebot">
+    <settings>
+      <naming convention="camelCase"></naming>
+      <defaults nullable="true" on-delete="restrict" on-update="restrict"></defaults>
+    </settings>
+  </project>
+  <roles></roles>
+  <tablespaces></tablespaces>
+  <extensions></extensions>
+  <types>
+    <enum name="marketplaces">
+      <label>WB</label>
+      <label>OZON</label>
+      <label>YANDEX</label>
+    </enum>
+    <enum name="types">
+      <label>fbo</label>
+      <label>fbs</label>
+      <label>all</label>
+    </enum>
+  </types>
+  <sequences></sequences>
+  <schema name="public">
+    <table name="cabinets">
+      <column name="cabinetId" type="serial" nullable="false"></column>
+      <column name="name" type="varchar" length="64" nullable="false"></column>
+      <column name="clientId" type="varchar" length="64"></column>
+      <column name="key" type="varchar" length="1024" nullable="false"></column>
+      <column name="marketplace" type="marketplaces" nullable="false"></column>
+      <column name="type" type="types" nullable="false"></column>
+      <column name="sheetLink" type="varchar" length="1024"></column>
+      <column name="settings" type="jsonb" nullable="false" default="&#39;{}&#39;::jsonb"></column>
+      <column name="statusId" type="integer" nullable="false"></column>
+      <pk name="cabinets_pkey">
+        <column name="cabinetId"></column>
+      </pk>
+      <fk name="Ref_cabinets_to_statuses" to-table="statuses" on-delete="no action" on-update="no action">
+        <column name="statusId" references="statusId"></column>
+      </fk>
+    </table>
+    <table name="orders">
+      <column name="orderId" type="serial" nullable="false"></column>
+      <column name="postingNumber" type="varchar" length="32" nullable="false"></column>
+      <column name="article" type="varchar" length="128" nullable="false"></column>
+      <column name="count" type="integer" nullable="false"></column>
+      <column name="cabinetId" type="integer" nullable="false"></column>
+      <column name="createdAt" type="timestamptz" nullable="false" default="now()"></column>
+      <column name="statusId" type="integer" nullable="false"></column>
+      <pk name="orders_pkey">
+        <column name="orderId"></column>
+      </pk>
+      <fk name="Ref_orders_to_cabinets" to-table="cabinets" on-delete="no action" on-update="no action">
+        <column name="cabinetId" references="cabinetId"></column>
+      </fk>
+      <fk name="Ref_orders_to_statuses" to-table="statuses" on-delete="no action" on-update="no action">
+        <column name="statusId" references="statusId"></column>
+      </fk>
+    </table>
+    <table name="products">
+      <column name="productId" type="integer" nullable="false">
+        <identity generated="by-default"></identity>
+      </column>
+      <column name="cabinetId" type="integer" nullable="false"></column>
+      <column name="article" type="varchar" length="128" nullable="false"></column>
+      <column name="title" type="varchar" length="128" nullable="false"></column>
+      <column name="externalId" type="varchar" length="128" nullable="false"></column>
+      <column name="description" type="text"></column>
+      <column name="recommendationIds" type="integer[]"></column>
+      <column name="statusId" type="integer" nullable="false"></column>
+      <pk name="products_pkey">
+        <column name="productId"></column>
+      </pk>
+      <fk name="Ref_products_to_cabinets" to-table="cabinets" on-delete="no action" on-update="no action">
+        <column name="cabinetId" references="cabinetId"></column>
+      </fk>
+      <fk name="Ref_products_to_statuses" to-table="statuses" on-delete="no action" on-update="no action">
+        <column name="statusId" references="statusId"></column>
+      </fk>
+    </table>
+    <table name="reviews">
+      <column name="reviewId" type="integer" nullable="false">
+        <identity generated="by-default"></identity>
+      </column>
+      <column name="cabinetId" type="integer" nullable="false"></column>
+      <column name="externalId" type="varchar" length="128" nullable="false"></column>
+      <column name="customerName" type="varchar" length="32" nullable="false" default="&#39;&#39;"></column>
+      <column name="text" type="text" nullable="false"></column>
+      <column name="pros" type="text" nullable="false"></column>
+      <column name="cons" type="text" nullable="false"></column>
+      <column name="valuation" type="integer" nullable="false"></column>
+      <column name="answer" type="text" nullable="false"></column>
+      <column name="article" type="varchar" length="128" nullable="false"></column>
+      <column name="createdAt" type="timestamptz" nullable="false" default="now()"></column>
+      <column name="statusId" type="integer" nullable="false"></column>
+      <pk name="reviews_pkey">
+        <column name="reviewId"></column>
+      </pk>
+      <fk name="Ref_reviews_to_cabinets" to-table="cabinets" on-delete="no action" on-update="no action">
+        <column name="cabinetId" references="cabinetId"></column>
+      </fk>
+      <fk name="Ref_reviews_to_statuses" to-table="statuses" on-delete="no action" on-update="no action">
+        <column name="statusId" references="statusId"></column>
+      </fk>
+    </table>
+    <table name="statuses">
+      <column name="statusId" type="serial" nullable="false"></column>
+      <column name="title" type="varchar" length="255" nullable="false"></column>
+      <column name="alias" type="varchar" length="64" nullable="false"></column>
+      <pk name="statuses_pkey">
+        <column name="statusId"></column>
+      </pk>
+    </table>
+    <table name="stocks">
+      <column name="stockId" type="serial" nullable="false"></column>
+      <column name="article" type="varchar" length="64" nullable="false"></column>
+      <column name="updatedAt" type="timestamptz" nullable="false" default="now()"></column>
+      <column name="countFbo" type="integer"></column>
+      <column name="countFbs" type="integer"></column>
+      <column name="cabinetId" type="integer" nullable="false"></column>
+      <pk name="stocks_pkey">
+        <column name="stockId"></column>
+      </pk>
+      <fk name="Ref_stocks_to_cabinets" to-table="cabinets" on-delete="no action" on-update="no action">
+        <column name="cabinetId" references="cabinetId"></column>
+      </fk>
+    </table>
+    <table name="users">
+      <column name="userId" type="serial" nullable="false"></column>
+      <column name="tgId" type="bigint" nullable="false"></column>
+      <column name="login" type="varchar" length="64"></column>
+      <column name="password" type="varchar" length="64"></column>
+      <column name="authKey" type="varchar" length="32"></column>
+      <column name="createdAt" type="timestamptz" nullable="false" default="now()"></column>
+      <column name="lastActivityAt" type="timestamptz"></column>
+      <column name="isAdmin" type="boolean" nullable="false" default="false"></column>
+      <column name="cabinetIds" type="integer[]"></column>
+      <column name="statusId" type="integer" nullable="false"></column>
+      <pk name="users_pkey">
+        <column name="userId"></column>
+      </pk>
+      <fk name="Ref_users_to_statuses" to-table="statuses" on-delete="no action" on-update="no action">
+        <column name="statusId" references="statusId"></column>
+      </fk>
+    </table>
+    <table name="vfsFiles">
+      <column name="fileId" type="serial" nullable="false"></column>
+      <column name="folderId" type="integer" nullable="false"></column>
+      <column name="title" type="varchar" length="255" nullable="false"></column>
+      <column name="path" type="varchar" length="255" nullable="false"></column>
+      <column name="params" type="text"></column>
+      <column name="isFavorite" type="boolean" default="false"></column>
+      <column name="mimeType" type="varchar" length="255" nullable="false"></column>
+      <column name="fileSize" type="integer" default="0"></column>
+      <column name="fileExists" type="boolean" nullable="false" default="true"></column>
+      <column name="createdAt" type="timestamp" nullable="false" default="now()"></column>
+      <column name="statusId" type="integer" nullable="false"></column>
+      <pk name="vfsFiles_pkey">
+        <column name="fileId"></column>
+      </pk>
+      <fk name="Ref_vfsFiles_to_statuses" to-table="statuses" on-delete="no action" on-update="no action">
+        <column name="statusId" references="statusId"></column>
+      </fk>
+      <fk name="Ref_vfsFiles_to_vfsFolders" to-table="vfsFolders" on-delete="no action" on-update="no action">
+        <column name="folderId" references="folderId"></column>
+      </fk>
+    </table>
+    <table name="vfsFolders">
+      <column name="folderId" type="serial" nullable="false"></column>
+      <column name="parentFolderId" type="integer"></column>
+      <column name="title" type="varchar" length="255" nullable="false"></column>
+      <column name="isFavorite" type="boolean" default="false"></column>
+      <column name="createdAt" type="timestamp" nullable="false" default="now()"></column>
+      <column name="statusId" type="integer" nullable="false"></column>
+      <pk name="vfsFolders_pkey">
+        <column name="folderId"></column>
+      </pk>
+      <fk name="Ref_vfsFolders_to_statuses" to-table="statuses" on-delete="no action" on-update="no action">
+        <column name="statusId" references="statusId"></column>
+      </fk>
+      <fk name="Ref_vfsFolders_to_vfsFolders" to-table="vfsFolders" on-delete="no action" on-update="no action">
+        <column name="parentFolderId" references="folderId"></column>
+      </fk>
+    </table>
+    <table name="vfsHashes">
+      <column name="hash" type="varchar" length="40" nullable="false"></column>
+      <column name="namespace" type="varchar" length="32" nullable="false"></column>
+      <column name="extension" type="varchar" length="4" nullable="false"></column>
+      <column name="fileSize" type="integer" nullable="false" default="0"></column>
+      <column name="width" type="integer" nullable="false" default="0"></column>
+      <column name="height" type="integer" nullable="false" default="0"></column>
+      <column name="blurhash" type="text"></column>
+      <column name="error" type="text"></column>
+      <column name="createdAt" type="timestamptz" nullable="false" default="now()"></column>
+      <column name="indexedAt" type="timestamptz"></column>
+      <pk name="vfsHashes_pkey">
+        <column name="hash"></column>
+        <column name="namespace"></column>
+      </pk>
+    </table>
+    <index name="IX_FK_orders_cabinetId_orders" table="orders">
+      <column name="cabinetId"></column>
+    </index>
+    <index name="IX_FK_products_cabinetId_products" table="products">
+      <column name="cabinetId"></column>
+    </index>
+    <index name="IX_FK_users_statusId_users" table="users">
+      <column name="statusId"></column>
+    </index>
+    <index name="IX_FK_vfsFiles_folderId_vfsFiles" table="vfsFiles">
+      <column name="folderId"></column>
+    </index>
+    <index name="IX_FK_vfsFiles_statusId_vfsFiles" table="vfsFiles">
+      <column name="statusId"></column>
+    </index>
+    <index name="IX_FK_vfsFolders_folderId_vfsFolders" table="vfsFolders">
+      <column name="parentFolderId"></column>
+    </index>
+    <index name="IX_FK_vfsFolders_statusId_vfsFolders" table="vfsFolders">
+      <column name="statusId"></column>
+    </index>
+    <index name="IX_reviews_externalId" table="reviews">
+      <column name="externalId"></column>
+    </index>
+    <index name="IX_tgId_unique" table="users" unique="true">
+      <column name="tgId"></column>
+    </index>
+    <index name="IX_vfsHashes_indexedAt" table="vfsHashes">
+      <column name="indexedAt"></column>
+    </index>
+    <index name="articleIdx" table="products">
+      <column name="article"></column>
+    </index>
+  </schema>
+  <functions></functions>
+  <triggers></triggers>
+  <rules></rules>
+  <policies></policies>
+  <comments></comments>
+  <layouts>
+    <layout name="Default Diagram" default="true">
+      <entity schema="public" table="cabinets" x="40" y="40"></entity>
+      <entity schema="public" table="orders" x="420" y="40"></entity>
+      <entity schema="public" table="products" x="800" y="40"></entity>
+      <entity schema="public" table="reviews" x="1180" y="40"></entity>
+      <entity schema="public" table="statuses" x="1560" y="40"></entity>
+      <entity schema="public" table="stocks" x="40" y="500"></entity>
+      <entity schema="public" table="users" x="420" y="500"></entity>
+      <entity schema="public" table="vfsFiles" x="800" y="500"></entity>
+      <entity schema="public" table="vfsFolders" x="1180" y="500"></entity>
+      <entity schema="public" table="vfsHashes" x="1560" y="500"></entity>
+    </layout>
+  </layouts>
+</pgd>
