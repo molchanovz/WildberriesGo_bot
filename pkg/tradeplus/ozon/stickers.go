@@ -270,24 +270,35 @@ func combineLabelWithBarcode(ozonPdfPath, outputPath, article string) error {
 	pdf := gofpdf.New("P", "mm", "", "")
 	pdf.AddPageFormat("P", gofpdf.SizeType{Wd: 75, Ht: 120})
 
-	// Размеры изображения до поворота
-	origWidth := 58.0
-	origHeight := 40.0
-
-	// После поворота ширина/высота меняются местами
-	rotatedHeight := origWidth
-
-	// Центр страницы
 	pageWidth := 75.0
 
-	// Центр изображения после поворота
-	centerX := pageWidth / 2
-	centerY := 13 + rotatedHeight/2 // Сдвиг вверх
+	// Реальное соотношение сторон отрендеренной этикетки
+	bounds := img.Bounds()
+	srcAspect := float64(bounds.Dx()) / float64(bounds.Dy())
 
-	// Вставка и поворот изображения
+	// Доступная область под этикетку после поворота на 90°
+	// (визуальная ширина = imgH, визуальная высота = imgW)
+	const (
+		availW = 73.0
+		availH = 55.0
+		topY   = 5.0
+	)
+
+	var imgW, imgH float64
+	if availW*srcAspect <= availH {
+		imgH = availW
+		imgW = availW * srcAspect
+	} else {
+		imgW = availH
+		imgH = availH / srcAspect
+	}
+
+	centerX := pageWidth / 2
+	centerY := topY + imgW/2
+
 	pdf.TransformBegin()
 	pdf.TransformRotate(90, centerX, centerY)
-	pdf.ImageOptions(tmpImg, centerX-origHeight/2+2, 8, origHeight+10, origWidth+18, false,
+	pdf.ImageOptions(tmpImg, centerX-imgW/2, centerY-imgH/2, imgW, imgH, false,
 		gofpdf.ImageOptions{ImageType: "JPG"}, 0, "")
 	pdf.TransformEnd()
 
