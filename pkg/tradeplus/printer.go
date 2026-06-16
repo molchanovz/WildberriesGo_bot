@@ -56,11 +56,6 @@ func CleanFiles() {
 	if err != nil {
 		log.Println(err)
 	}
-
-	err = os.RemoveAll(DirectoryPath)
-	if err != nil {
-		log.Println(err)
-	}
 }
 
 func CreateDirectories() {

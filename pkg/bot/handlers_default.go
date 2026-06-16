@@ -276,9 +276,11 @@ func WaitReadyFile(ctx context.Context, bot *botlib.Bot, chatID int64, progressC
 			}
 			return nil
 
-		case err = <-errChan:
-			_, err = bot.SendMessage(ctx, &botlib.SendMessageParams{ChatID: chatID, Text: err.Error()})
-			return err
+		case e := <-errChan:
+			if _, sendErr := bot.SendMessage(ctx, &botlib.SendMessageParams{ChatID: chatID, Text: e.Error()}); sendErr != nil {
+				log.Println(sendErr)
+			}
+			return e
 		}
 	}
 }
