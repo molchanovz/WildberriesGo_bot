@@ -106,7 +106,7 @@ func (m StickerManager) orders(supplyID string) ([]wb.OrderFBS, error) {
 		return nil, err
 	}
 
-	dateFrom := int(wb.GetUnix(time.Now().AddDate(0, 0, -7)))
+	dateFrom := int(wb.GetUnix(time.Now().AddDate(0, 0, -14)))
 	dateTo := int(wb.GetUnix(time.Now()))
 
 	allOrders, err := m.client.GetOrdersFBS(dateFrom, dateTo)
@@ -121,11 +121,20 @@ func (m StickerManager) orders(supplyID string) ([]wb.OrderFBS, error) {
 	}
 
 	// Отбираем только нужные заказы
+	var missingIDs []int
 	for _, id := range ordersIDs.IDs {
 		if order, exists := orderMap[id]; exists {
 			filteredOrders = append(filteredOrders, order)
+		} else {
+			missingIDs = append(missingIDs, id)
 		}
 	}
+
+	if len(missingIDs) > 0 {
+		log.Printf("поставка %s: в списке FBS-заказов не найдено %d из %d заказов: %v",
+			supplyID, len(missingIDs), len(ordersIDs.IDs), missingIDs)
+	}
+
 	sortOrdersByArticle(filteredOrders)
 
 	return filteredOrders, nil
