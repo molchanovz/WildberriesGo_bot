@@ -50,7 +50,8 @@ func (c Client) request(reqType, baseURL string, headers map[string]string, para
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("get status: %v", resp.Status)
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("get status: %v: %s", resp.Status, respBody)
 	}
 
 	jsonString, err := io.ReadAll(resp.Body)
