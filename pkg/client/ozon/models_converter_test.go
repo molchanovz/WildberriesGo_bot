@@ -3,6 +3,7 @@ package ozon
 import (
 	"context"
 	"testing"
+
 	"tradebot/pkg/db"
 
 	"github.com/BurntSushi/toml"

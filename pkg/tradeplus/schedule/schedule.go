@@ -7,13 +7,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vmkteam/embedlog"
 	"tradebot/pkg/bot"
 	"tradebot/pkg/db"
 	"tradebot/pkg/tradeplus"
 	"tradebot/pkg/tradeplus/ozon"
 	"tradebot/pkg/tradeplus/wb"
 	"tradebot/pkg/tradeplus/yandex"
+
+	"github.com/vmkteam/embedlog"
 )
 
 type Manager struct {

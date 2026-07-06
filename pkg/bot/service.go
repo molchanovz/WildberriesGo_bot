@@ -2,15 +2,16 @@ package bot
 
 import (
 	"context"
-	"github.com/vmkteam/embedlog"
 	"log"
 	"net/http"
 	"net/url"
 	"time"
+
 	"tradebot/pkg/client/chatgptsrv"
 	"tradebot/pkg/db"
 
 	botlib "github.com/go-telegram/bot"
+	"github.com/vmkteam/embedlog"
 )
 
 type Config struct {

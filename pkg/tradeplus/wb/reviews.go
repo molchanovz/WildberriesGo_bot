@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+
 	"tradebot/pkg/client/chatgptsrv"
 	"tradebot/pkg/client/wb"
 	"tradebot/pkg/db"

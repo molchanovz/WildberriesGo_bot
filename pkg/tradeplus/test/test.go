@@ -1,11 +1,12 @@
 package test
 
 import (
+	"tradebot/pkg/db"
+
 	"github.com/BurntSushi/toml"
 	"github.com/go-pg/pg/v10"
 	"github.com/vmkteam/cron"
 	"github.com/vmkteam/vfs"
-	"tradebot/pkg/db"
 )
 
 var (

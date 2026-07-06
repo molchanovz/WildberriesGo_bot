@@ -1,11 +1,13 @@
 package wb
 
 import (
-	"github.com/stretchr/testify/require"
 	"testing"
+
 	"tradebot/pkg/db"
 	"tradebot/pkg/tradeplus"
 	"tradebot/pkg/tradeplus/test"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestReturnsManager_WriteReturns(t *testing.T) {

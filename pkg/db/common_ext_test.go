@@ -2,11 +2,12 @@ package db
 
 import (
 	"context"
+	"log"
+	"testing"
+
 	"github.com/BurntSushi/toml"
 	"github.com/go-pg/pg/v10"
 	"github.com/stretchr/testify/require"
-	"log"
-	"testing"
 )
 
 type Config struct {

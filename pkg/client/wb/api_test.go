@@ -2,11 +2,13 @@ package wb
 
 import (
 	"fmt"
-	. "github.com/smartystreets/goconvey/convey"
 	"testing"
 	"time"
+
 	"tradebot/pkg/db"
 	"tradebot/pkg/db/test"
+
+	. "github.com/smartystreets/goconvey/convey"
 )
 
 func TestReviews(t *testing.T) {

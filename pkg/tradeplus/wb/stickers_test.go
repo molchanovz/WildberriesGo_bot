@@ -1,12 +1,14 @@
 package wb
 
 import (
-	. "github.com/smartystreets/goconvey/convey"
-	"github.com/stretchr/testify/require"
 	"testing"
+
 	"tradebot/pkg/db"
 	"tradebot/pkg/db/test"
 	"tradebot/pkg/tradeplus"
+
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/stretchr/testify/require"
 )
 
 func TestStickerManager_orders(t *testing.T) {

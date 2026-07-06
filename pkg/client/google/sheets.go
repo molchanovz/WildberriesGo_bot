@@ -132,6 +132,158 @@ func (SheetsService) saveToken(path string, token *oauth2.Token) error {
 //	}
 // }
 
+// SheetStat описывает размер сетки одной вкладки книги.
+type SheetStat struct {
+	SheetID int64
+	Title   string
+	Rows    int64
+	Columns int64
+}
+
+// Cells возвращает число ячеек в сетке вкладки (Rows*Columns), включая пустые.
+func (s SheetStat) Cells() int64 { return s.Rows * s.Columns }
+
+// GridStats возвращает размер сетки каждой вкладки книги. Именно сумма Cells()
+// по всем вкладкам сравнивается с лимитом Google Sheets в 10 000 000 ячеек —
+// пустые ячейки в пределах сетки тоже считаются.
+func (gs SheetsService) GridStats(spreadsheetID string) ([]SheetStat, error) {
+	ctx := context.Background()
+	srv, err := gs.service(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	ss, err := srv.Spreadsheets.Get(spreadsheetID).
+		Fields("sheets.properties(sheetId,title,gridProperties(rowCount,columnCount))").Do()
+	if err != nil {
+		return nil, fmt.Errorf("get spreadsheet: %w", err)
+	}
+
+	out := make([]SheetStat, 0, len(ss.Sheets))
+	for _, s := range ss.Sheets {
+		if s.Properties == nil {
+			continue
+		}
+		st := SheetStat{SheetID: s.Properties.SheetId, Title: s.Properties.Title}
+		if gp := s.Properties.GridProperties; gp != nil {
+			st.Rows = gp.RowCount
+			st.Columns = gp.ColumnCount
+		}
+		out = append(out, st)
+	}
+	return out, nil
+}
+
+// ResizeTarget описывает лист, который нужно очистить и ужать.
+type ResizeTarget struct {
+	Title   string
+	SheetID int64
+	Rows    int64 // сколько строк оставить
+	Columns int64 // сколько столбцов оставить
+}
+
+// ClearAndResizeBatch очищает и ужимает сетку сразу у всех targets за два
+// вызова API: один BatchClear (стирает значения на всех листах) и один
+// BatchUpdate (сжимает сетку у всех листов). В отличие от простой очистки
+// содержимого это реально уменьшает число ячеек книги.
+func (gs SheetsService) ClearAndResizeBatch(spreadsheetID string, targets []ResizeTarget) error {
+	if len(targets) == 0 {
+		return nil
+	}
+	ctx := context.Background()
+	srv, err := gs.service(ctx)
+	if err != nil {
+		return err
+	}
+
+	// 1. Стираем значения на всех листах одним запросом.
+	ranges := make([]string, len(targets))
+	for i, t := range targets {
+		ranges[i] = t.Title
+	}
+	if _, err := srv.Spreadsheets.Values.BatchClear(spreadsheetID, &sheets.BatchClearValuesRequest{
+		Ranges: ranges,
+	}).Do(); err != nil {
+		return fmt.Errorf("batch clear: %w", err)
+	}
+
+	// 2. Ужимаем сетку у всех листов одним запросом — это освобождает ячейки.
+	reqs := make([]*sheets.Request, len(targets))
+	for i, t := range targets {
+		reqs[i] = &sheets.Request{
+			UpdateSheetProperties: &sheets.UpdateSheetPropertiesRequest{
+				Properties: &sheets.SheetProperties{
+					SheetId: t.SheetID,
+					GridProperties: &sheets.GridProperties{
+						RowCount:        t.Rows,
+						ColumnCount:     t.Columns,
+						ForceSendFields: []string{"RowCount", "ColumnCount"},
+					},
+				},
+				Fields: "gridProperties.rowCount,gridProperties.columnCount",
+			},
+		}
+	}
+	if _, err := srv.Spreadsheets.BatchUpdate(spreadsheetID, &sheets.BatchUpdateSpreadsheetRequest{
+		Requests: reqs,
+	}).Do(); err != nil {
+		return fmt.Errorf("batch resize: %w", err)
+	}
+	return nil
+}
+
+// FormatTarget описывает лист (и размер его сетки) для снятия форматирования.
+type FormatTarget struct {
+	Title   string
+	SheetId int64
+	Rows    int64
+	Columns int64
+}
+
+// UnmergeAndClearColorBatch за один BatchUpdate снимает объединения ячеек и
+// сбрасывает заливку фона (на белый) по всей сетке каждого из targets.
+// Объединения и цвет не влияют на лимит ячеек книги — это косметика.
+func (gs SheetsService) UnmergeAndClearColorBatch(spreadsheetID string, targets []FormatTarget) error {
+	if len(targets) == 0 {
+		return nil
+	}
+	ctx := context.Background()
+	srv, err := gs.service(ctx)
+	if err != nil {
+		return err
+	}
+
+	reqs := make([]*sheets.Request, 0, len(targets)*2)
+	for _, t := range targets {
+		full := &sheets.GridRange{
+			SheetId:          t.SheetId,
+			StartRowIndex:    0,
+			EndRowIndex:      t.Rows,
+			StartColumnIndex: 0,
+			EndColumnIndex:   t.Columns,
+			ForceSendFields:  []string{"StartRowIndex", "StartColumnIndex"},
+		}
+		reqs = append(reqs,
+			&sheets.Request{UnmergeCells: &sheets.UnmergeCellsRequest{Range: full}},
+			&sheets.Request{RepeatCell: &sheets.RepeatCellRequest{
+				Range: full,
+				Cell: &sheets.CellData{
+					UserEnteredFormat: &sheets.CellFormat{
+						BackgroundColor: &sheets.Color{Red: 1, Green: 1, Blue: 1},
+					},
+				},
+				Fields: "userEnteredFormat.backgroundColor",
+			}},
+		)
+	}
+	if _, err := srv.Spreadsheets.BatchUpdate(spreadsheetID, &sheets.BatchUpdateSpreadsheetRequest{
+		Requests: reqs,
+	}).Do(); err != nil {
+		return fmt.Errorf("batch unmerge/clear color: %w", err)
+	}
+	return nil
+}
+
 func (gs SheetsService) service(ctx context.Context) (*sheets.Service, error) {
 	b, err := os.ReadFile(gs.credentialsPath)
 	if err != nil {
@@ -234,7 +386,7 @@ func (gs SheetsService) Append(spreadsheetID, writeRange string, values [][]inte
 
 	_, err = srv.Spreadsheets.Values.Append(spreadsheetID, writeRange, body).
 		ValueInputOption("USER_ENTERED").
-		InsertDataOption("INSERT_ROWS").
+		InsertDataOption("OVERWRITE").
 		Do()
 	if err != nil {
 		return fmt.Errorf("unable to append data to sheet: %w", err)

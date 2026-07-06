@@ -1,17 +1,19 @@
 package wb
 
 import (
-	"github.com/BurntSushi/toml"
-	"github.com/openai/openai-go/v3"
-	. "github.com/smartystreets/goconvey/convey"
-	"github.com/stretchr/testify/require"
 	"net/http"
 	"testing"
 	"time"
+
 	"tradebot/pkg/client/chatgptsrv"
 	"tradebot/pkg/db"
 	"tradebot/pkg/tradeplus"
 	"tradebot/pkg/tradeplus/test"
+
+	"github.com/BurntSushi/toml"
+	"github.com/openai/openai-go/v3"
+	. "github.com/smartystreets/goconvey/convey"
+	"github.com/stretchr/testify/require"
 )
 
 var (

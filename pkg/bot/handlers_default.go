@@ -3,20 +3,20 @@ package bot
 import (
 	"context"
 	"fmt"
-	"github.com/vmkteam/embedlog"
 	"log"
 	"math"
 	"os"
 	"strconv"
 	"sync"
-	"tradebot/pkg/client/chatgptsrv"
-	"tradebot/pkg/tradeplus/ozon"
 
+	"tradebot/pkg/client/chatgptsrv"
 	"tradebot/pkg/db"
 	"tradebot/pkg/tradeplus"
+	"tradebot/pkg/tradeplus/ozon"
 
 	botlib "github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
+	"github.com/vmkteam/embedlog"
 	"github.com/xuri/excelize/v2"
 )
 
