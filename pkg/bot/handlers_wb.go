@@ -244,26 +244,27 @@ func (m *Manager) returnsHandler(ctx context.Context, bot *botlib.Bot, update *m
 	}
 }
 
-func (m *Manager) SendNewReviews(ctx context.Context) error {
+// FetchReviews (cron A) pulls unanswered reviews from WB into the DB as Created.
+func (m *Manager) FetchReviews(ctx context.Context) error {
 	cabinets, err := m.tm.GetCabinetsByMp(ctx, db.MarketWB)
 	if err != nil {
 		return fmt.Errorf("%w", err)
 	}
 
 	manager := wb.NewReviewManager(m.dbc, &cabinets[0], m.chatgpt)
+	return manager.Fetch(ctx)
+}
 
-	newReviews, err := manager.Reviews(ctx)
+// ProcessReviews (cron B) generates answers for Created reviews and routes them:
+// positives are auto-posted to WB, problems go to the operator in Telegram.
+func (m *Manager) ProcessReviews(ctx context.Context) error {
+	cabinets, err := m.tm.GetCabinetsByMp(ctx, db.MarketWB)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w", err)
 	}
-	for i := range newReviews {
-		err = m.sendReview(ctx, newReviews[i])
-		if err != nil {
-			m.sl.Errorf("message send failed: %v", err)
-			continue
-		}
-	}
-	return nil
+
+	manager := wb.NewReviewManager(m.dbc, &cabinets[0], m.chatgpt)
+	return manager.ProcessPending(ctx, m.sendReview)
 }
 
 func (m *Manager) sendReview(ctx context.Context, review tradeplus.Review) error {

@@ -26,7 +26,7 @@ var Columns = struct {
 		ID, TgID, IsAdmin, CabinetIDs, StatusID, Login, Password, AuthKey, CreatedAt, LastActivityAt string
 	}
 	Review struct {
-		ID, CabinetID, ExternalID, Text, Pros, Cons, Valuation, Answer, Article, CreatedAt, StatusID, CustomerName string
+		ID, CabinetID, ExternalID, Text, Pros, Cons, Valuation, Answer, Article, CreatedAt, StatusID, CustomerName, Photos, ToOperator string
 
 		Cabinet string
 	}
@@ -106,7 +106,7 @@ var Columns = struct {
 		LastActivityAt: "lastActivityAt",
 	},
 	Review: struct {
-		ID, CabinetID, ExternalID, Text, Pros, Cons, Valuation, Answer, Article, CreatedAt, StatusID, CustomerName string
+		ID, CabinetID, ExternalID, Text, Pros, Cons, Valuation, Answer, Article, CreatedAt, StatusID, CustomerName, Photos, ToOperator string
 
 		Cabinet string
 	}{
@@ -122,6 +122,8 @@ var Columns = struct {
 		CreatedAt:    "createdAt",
 		StatusID:     "statusId",
 		CustomerName: "customerName",
+		Photos:       "photos",
+		ToOperator:   "toOperator",
 
 		Cabinet: "Cabinet",
 	},
@@ -346,6 +348,8 @@ type Review struct {
 	CreatedAt    time.Time `pg:"createdAt,use_zero"`
 	StatusID     int       `pg:"statusId,use_zero"`
 	CustomerName string    `pg:"customerName,use_zero"`
+	Photos       []string  `pg:"photos,array"`
+	ToOperator   bool      `pg:"toOperator,use_zero"`
 
 	Cabinet *Cabinet `pg:"fk:cabinetId,rel:has-one"`
 }

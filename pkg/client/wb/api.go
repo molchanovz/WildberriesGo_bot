@@ -334,7 +334,44 @@ func (c Client) apiSalesAndReturns(daysAgo int) (string, error) {
 
 	return response, nil
 }
+
+// reviewPageSize is the WB feedbacks page size. Reviews() pages through all
+// unanswered feedbacks; reviewMaxFetch caps the total to avoid runaway loops.
+const (
+	reviewPageSize = 100
+	reviewMaxFetch = 10000
+)
+
+// Reviews returns ALL unanswered feedbacks, paging through the WB API.
+// The WB endpoint returns at most reviewPageSize per request, so a single
+// take=100/skip=0 call (the previous behaviour) only ever saw the first 100
+// reviews and never reached the rest.
 func (c Client) Reviews() (*Review, error) {
+	var result *Review
+
+	for skip := 0; skip < reviewMaxFetch; skip += reviewPageSize {
+		page, err := c.reviewsPage(skip, reviewPageSize)
+		if err != nil {
+			return nil, err
+		}
+
+		if result == nil {
+			result = page
+		} else {
+			result.Data.Feedbacks = append(result.Data.Feedbacks, page.Data.Feedbacks...)
+		}
+
+		// Last page reached once WB returns fewer than a full page.
+		if len(page.Data.Feedbacks) < reviewPageSize {
+			break
+		}
+	}
+
+	return result, nil
+}
+
+// reviewsPage fetches a single page of unanswered feedbacks.
+func (c Client) reviewsPage(skip, take int) (*Review, error) {
 	baseURL := "https://feedbacks-api.wildberries.ru/api/v1/feedbacks"
 
 	body := []byte(``)
@@ -345,8 +382,8 @@ func (c Client) Reviews() (*Review, error) {
 
 	params := map[string]string{
 		"isAnswered": "false",
-		"take":       "100",
-		"skip":       "0",
+		"take":       strconv.Itoa(take),
+		"skip":       strconv.Itoa(skip),
 	}
 
 	_, response, err := c.get(baseURL, headers, params, body)

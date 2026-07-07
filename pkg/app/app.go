@@ -46,7 +46,8 @@ type Config struct {
 		WBShipments      cron.Schedule
 		WBShipmentsAll   cron.Schedule
 		OrderCleaner     cron.Schedule
-		SendNewReviews   cron.Schedule
+		FetchReviews     cron.Schedule
+		ProcessReviews   cron.Schedule
 	}
 	OpenAI struct {
 		Token string

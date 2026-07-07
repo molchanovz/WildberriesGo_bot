@@ -1,6 +1,7 @@
 package wb
 
 import (
+	"context"
 	"net/http"
 	"testing"
 	"time"
@@ -39,9 +40,17 @@ func TestReviewManager_Reviews(t *testing.T) {
 	require.NoError(t, err)
 
 	m := NewReviewManager(*dbc, tradeplus.NewCabinet(cabinet), gptSrv)
-	reviews, err := m.Reviews(t.Context())
+
+	require.NoError(t, m.Fetch(t.Context()))
+
+	sent := 0
+	err = m.ProcessPending(t.Context(), func(_ context.Context, r tradeplus.Review) error {
+		sent++
+		t.Logf("to operator: %s -> %s", r.ExternalID, r.Answer)
+		return nil
+	})
 	require.NoError(t, err)
-	t.Log(reviews)
+	t.Logf("sent to operator: %d", sent)
 }
 
 func TestReviewManager_AnswerReview(t *testing.T) {

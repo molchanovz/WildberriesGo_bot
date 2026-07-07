@@ -24,7 +24,8 @@ func (a *App) newCron() *cron.Manager {
 	cm.AddFunc("yandexOrders", a.cfg.Cron.YandexWriter, a.scheduleManager.WriteYandex)
 	cm.AddFunc("yandexShipments", a.cfg.Cron.YandexShipments, a.scheduleManager.WriteYandexShipments)
 	cm.AddFunc("cleanOrders", a.cfg.Cron.OrderCleaner, a.scheduleManager.ClearOrders)
-	cm.AddFunc("sendNewReviews", a.cfg.Cron.SendNewReviews, a.scheduleManager.SendNewReviews)
+	cm.AddFunc("fetchReviews", a.cfg.Cron.FetchReviews, a.scheduleManager.FetchReviews)
+	cm.AddFunc("processReviews", a.cfg.Cron.ProcessReviews, a.scheduleManager.ProcessReviews)
 
 	return cm
 }

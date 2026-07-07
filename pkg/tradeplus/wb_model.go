@@ -49,9 +49,12 @@ func (r Review) ToMessage() string {
 		`{{end}}{{if .Pros}}<b>Достоинства</b>: {{.Pros}}` + "\n" +
 		`{{end}}{{if .Cons}}<b>Недостатки</b>: {{.Cons}}` + "\n" +
 		`{{end}}{{if .Text}}<b>Отзыв</b>: {{.Text}}` + "\n" +
+		`{{end}}{{if .Photos}}<b>Фото</b>:{{range $i, $p := .Photos}} <a href="{{$p}}">📷{{addOne $i}}</a>{{end}}` + "\n" +
 		`{{end}}{{if .Answer}}<b>Ответ</b>: <pre>{{.Answer}}</pre>{{end}}`
 
-	tmpl := template.Must(template.New("review").Parse(reviewTemplate))
+	tmpl := template.Must(template.New("review").
+		Funcs(template.FuncMap{"addOne": func(i int) int { return i + 1 }}).
+		Parse(reviewTemplate))
 
 	var sb strings.Builder
 	err := tmpl.Execute(&sb, r)
@@ -101,6 +104,8 @@ func (r Review) ToDB() *db.Review {
 		CreatedAt:    r.CreatedAt,
 		StatusID:     r.StatusID,
 		CustomerName: r.CustomerName,
+		Photos:       r.Photos,
+		ToOperator:   r.ToOperator,
 	}
 }
 
@@ -119,6 +124,12 @@ func NewReviewFromWB(in wbc.Feedback) Review {
 		r.Text += "\nПокупатель отметил: " + strings.Join(in.Bables, ", ")
 	}
 
+	for _, p := range in.PhotoLinks {
+		if p.FullSize != "" {
+			r.Photos = append(r.Photos, p.FullSize)
+		}
+	}
+
 	return Review{
 		Review: r,
 	}
@@ -132,7 +143,7 @@ func NewReviewsFromWB(in *wbc.Review) Reviews {
 	var reviews = make(Reviews, 0, len(in.Data.Feedbacks))
 	for i := range in.Data.Feedbacks {
 		review := NewReviewFromWB(in.Data.Feedbacks[i])
-		review.StatusID = db.ReviewStatusCompleted
+		review.StatusID = db.ReviewStatusCreated
 		reviews = append(reviews, review)
 	}
 	return reviews

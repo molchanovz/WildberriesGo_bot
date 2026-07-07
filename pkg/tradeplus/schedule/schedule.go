@@ -253,6 +253,10 @@ func (s *Manager) ClearOrders(ctx context.Context) error {
 	return s.tm.DeleteOrders(ctx)
 }
 
-func (s *Manager) SendNewReviews(ctx context.Context) error {
-	return s.bs.Manager().SendNewReviews(ctx)
+func (s *Manager) FetchReviews(ctx context.Context) error {
+	return s.bs.Manager().FetchReviews(ctx)
+}
+
+func (s *Manager) ProcessReviews(ctx context.Context) error {
+	return s.bs.Manager().ProcessReviews(ctx)
 }

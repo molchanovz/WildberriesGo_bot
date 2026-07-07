@@ -35,7 +35,8 @@ type Config struct {
 		YandexWriter   cron.Schedule
 		WBWriter       cron.Schedule
 		OrderCleaner   cron.Schedule
-		SendNewReviews cron.Schedule
+		FetchReviews   cron.Schedule
+		ProcessReviews cron.Schedule
 	}
 	VFS vfs.Config
 }
