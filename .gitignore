@@ -10,3 +10,6 @@ pkg/client/google/credentials.json
 .claude
 /tmp
 CLAUDE.md
+.DS_Store
+/reviewtest
+cmd/reviewtest/

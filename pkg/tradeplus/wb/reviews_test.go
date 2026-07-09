@@ -3,6 +3,7 @@ package wb
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,4 +69,32 @@ func TestReviewManager_AnswerReview(t *testing.T) {
 		err = m.AnswerReview(t.Context(), "ftey4CV8ccvlbmQ5Acjh")
 		So(err, ShouldBeNil)
 	})
+}
+
+// TestSetAnswerEmptyPositive verifies that a text-less 4–5★ review is answered
+// with a canned thank-you plus the recommendation and routed for auto-posting,
+// WITHOUT calling the model. The nil chatgpt client here is the guard: if the
+// short-circuit failed and SetAnswer reached the model, it would panic.
+func TestSetAnswerEmptyPositive(t *testing.T) {
+	m := ReviewManager{} // zero value: chatgpt is nil on purpose
+
+	for _, stars := range []int{4, 5} {
+		nr := &tradeplus.Review{Review: db.Review{Valuation: stars}}
+		require.True(t, nr.IsEmpty(), "review with %d★ and no content must be empty", stars)
+
+		err := m.SetAnswer(context.Background(), nr, tradeplus.Product{})
+		require.NoError(t, err, "%d★", stars)
+		require.False(t, nr.ToOperator, "%d★: should auto-post, not go to operator", stars)
+		require.NotEmpty(t, nr.Answer, "%d★", stars)
+		require.Contains(t, nr.Answer, "Рекомендуем", "%d★: answer must carry a recommendation", stars)
+
+		matched := false
+		for _, canned := range emptyPositiveAnswers {
+			if strings.HasPrefix(nr.Answer, canned) {
+				matched = true
+				break
+			}
+		}
+		require.True(t, matched, "%d★: answer must start with a canned thank-you: %q", stars, nr.Answer)
+	}
 }

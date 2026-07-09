@@ -5,6 +5,7 @@
 package db
 
 import (
+	"encoding/json"
 	"time"
 )
 
@@ -336,20 +337,19 @@ type User struct {
 type Review struct {
 	tableName struct{} `pg:"reviews,alias:t,discard_unknown_columns"`
 
-	ID           int       `pg:"reviewId,pk"`
-	CabinetID    int       `pg:"cabinetId,use_zero"`
-	ExternalID   string    `pg:"externalId,use_zero"`
-	Text         string    `pg:"text,use_zero"`
-	Pros         string    `pg:"pros,use_zero"`
-	Cons         string    `pg:"cons,use_zero"`
-	Valuation    int       `pg:"valuation,use_zero"`
-	Answer       string    `pg:"answer,use_zero"`
-	Article      string    `pg:"article,use_zero"`
-	CreatedAt    time.Time `pg:"createdAt,use_zero"`
-	StatusID     int       `pg:"statusId,use_zero"`
-	CustomerName string    `pg:"customerName,use_zero"`
-	Photos       []string  `pg:"photos,array"`
-	ToOperator   bool      `pg:"toOperator,use_zero"`
+	ID         int       `pg:"reviewId,pk"`
+	CabinetID  int       `pg:"cabinetId,use_zero"`
+	ExternalID string    `pg:"externalId,use_zero"`
+	Valuation  int       `pg:"valuation,use_zero"`
+	Answer     string    `pg:"answer,use_zero"`
+	Article    string    `pg:"article,use_zero"`
+	CreatedAt  time.Time `pg:"createdAt,use_zero"`
+	StatusID   int       `pg:"statusId,use_zero"`
+	ToOperator bool      `pg:"toOperator,use_zero"`
+	// Payload holds the full review content and WB-derived context as jsonb
+	// (text/pros/cons/customerName/photos + enrichment). See tradeplus.ReviewPayload.
+	// Replaces the former text/pros/cons/customerName/photos columns.
+	Payload json.RawMessage `pg:"payload,type:jsonb"`
 
 	Cabinet *Cabinet `pg:"fk:cabinetId,rel:has-one"`
 }

@@ -207,7 +207,24 @@ type gptReviewResponse struct {
 	ToOperator bool   `json:"to_operator"`
 }
 
+// emptyPositiveAnswers are the canned thank-yous used for text-less 4–5★
+// reviews, where a generated answer adds nothing. The product recommendation is
+// appended by SetAnswer just like for any positive review.
+var emptyPositiveAnswers = []string{
+	"Спасибо за высокую оценку! Нам очень приятно.",
+	"Благодарим за оценку — рады, что товар понравился!",
+	"Спасибо, что выбрали нас и оценили товар!",
+}
+
 func (m ReviewManager) SetAnswer(ctx context.Context, nr *tradeplus.Review, product tradeplus.Product) error {
+	// Text-less 4–5★ review: skip the model, post a fixed thank-you plus the
+	// recommendation and auto-post it (ToOperator stays false).
+	if nr.Valuation >= 4 && nr.IsEmpty() {
+		nr.Answer = emptyPositiveAnswers[rand.Intn(len(emptyPositiveAnswers))] + m.offerByArticle(product)
+		nr.ToOperator = false
+		return nil
+	}
+
 	request := Prompt + nr.ToPrompt(product.Description)
 	raw, err := m.chatgpt.Chatgpt.Send(ctx, request)
 	if err != nil {

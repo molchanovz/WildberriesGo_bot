@@ -1,6 +1,7 @@
 package tradeplus
 
 import (
+	"encoding/json"
 	"strings"
 	"text/template"
 	"time"
@@ -9,9 +10,43 @@ import (
 	"tradebot/pkg/db"
 )
 
+// ReviewPayload is the jsonb shape stored in reviews.payload. It holds the
+// review content plus WB-derived context that we feed the model, replacing the
+// former text/pros/cons/customerName/photos columns. Add a field here (no
+// migration needed) to feed more WB data to the answer generator.
+type ReviewPayload struct {
+	Text         string     `json:"text,omitempty"`
+	Pros         string     `json:"pros,omitempty"`
+	Cons         string     `json:"cons,omitempty"`
+	CustomerName string     `json:"customerName,omitempty"`
+	Photos       []string   `json:"photos,omitempty"`
+	Bables       []string   `json:"bables,omitempty"`
+	MatchingSize string     `json:"matchingSize,omitempty"` // normalized RU: "маломерит"/"большемерит"/""
+	ReturnStatus string     `json:"returnStatus,omitempty"` // "available"/"returned"/"unavailable"/""
+	OrderedAt    *time.Time `json:"orderedAt,omitempty"`
+	ProductName  string     `json:"productName,omitempty"`
+	SubjectName  string     `json:"subjectName,omitempty"`
+	Color        string     `json:"color,omitempty"`
+}
+
 type Review struct {
 	db.Review
 	ArticleDescription *string
+
+	// Decoded view of db.Review.Payload — the source of truth for display and
+	// prompt building. Populated by NewReview / NewReviewFromWB.
+	Text         string
+	Pros         string
+	Cons         string
+	CustomerName string
+	Photos       []string
+	Bables       []string
+	MatchingSize string
+	ReturnStatus string
+	OrderedAt    time.Time
+	ProductName  string
+	SubjectName  string
+	Color        string
 }
 
 func NewReview(in *db.Review) *Review {
@@ -19,9 +54,68 @@ func NewReview(in *db.Review) *Review {
 		return nil
 	}
 
-	return &Review{
-		Review: *in,
+	r := &Review{Review: *in}
+	r.decodePayload()
+	return r
+}
+
+// decodePayload unpacks db.Review.Payload into the flat fields used by the
+// templates. A missing/invalid payload leaves the fields zero-valued.
+func (r *Review) decodePayload() {
+	if len(r.Review.Payload) == 0 {
+		return
 	}
+	var p ReviewPayload
+	if err := json.Unmarshal(r.Review.Payload, &p); err != nil {
+		return
+	}
+	r.Text = p.Text
+	r.Pros = p.Pros
+	r.Cons = p.Cons
+	r.CustomerName = p.CustomerName
+	r.Photos = p.Photos
+	r.Bables = p.Bables
+	r.MatchingSize = p.MatchingSize
+	r.ReturnStatus = p.ReturnStatus
+	r.ProductName = p.ProductName
+	r.SubjectName = p.SubjectName
+	r.Color = p.Color
+	if p.OrderedAt != nil {
+		r.OrderedAt = *p.OrderedAt
+	}
+}
+
+// ReturnNote renders the WB return status as a human phrase (empty when a
+// return is still available / unknown). Used by both the operator message and
+// the model prompt so the bot never offers a return that already happened.
+func (r Review) ReturnNote() string {
+	switch r.ReturnStatus {
+	case "returned":
+		return "покупатель уже оформил возврат по этому заказу"
+	case "unavailable":
+		return "возврат по этому заказу недоступен"
+	default:
+		return ""
+	}
+}
+
+// SizeNote surfaces WB's structured size-match signal only when it indicates a
+// mismatch.
+func (r Review) SizeNote() string {
+	switch r.MatchingSize {
+	case "маломерит", "большемерит":
+		return "по данным WB товар " + r.MatchingSize
+	default:
+		return ""
+	}
+}
+
+// OrderedNote renders the order date (empty when unknown).
+func (r Review) OrderedNote() string {
+	if r.OrderedAt.IsZero() {
+		return ""
+	}
+	return r.OrderedAt.Format("02.01.2006")
 }
 
 type ArticleInfo struct {
@@ -32,6 +126,19 @@ type ArticleInfo struct {
 type Recommendation struct {
 	Title   string `json:"title"`
 	Article string `json:"article"`
+}
+
+// IsEmpty reports that the customer left no content at all — only a star
+// rating, with no text/pros/cons, no selected tags and no photos. WB does
+// return such "silent" reviews. Only WB-attached metadata (returnStatus,
+// productName, …) may be present; it is not customer content. Such reviews
+// need no generated answer.
+func (r Review) IsEmpty() bool {
+	return strings.TrimSpace(r.Text) == "" &&
+		strings.TrimSpace(r.Pros) == "" &&
+		strings.TrimSpace(r.Cons) == "" &&
+		len(r.Bables) == 0 &&
+		len(r.Photos) == 0
 }
 
 func (r Review) Stars() string {
@@ -49,11 +156,17 @@ func (r Review) ToMessage() string {
 		`{{end}}{{if .Pros}}<b>Достоинства</b>: {{.Pros}}` + "\n" +
 		`{{end}}{{if .Cons}}<b>Недостатки</b>: {{.Cons}}` + "\n" +
 		`{{end}}{{if .Text}}<b>Отзыв</b>: {{.Text}}` + "\n" +
+		`{{end}}{{if .Bables}}<b>Отметил</b>: {{join .Bables}}` + "\n" +
+		`{{end}}{{if .SizeNote}}<b>Размер</b>: {{.SizeNote}}` + "\n" +
+		`{{end}}{{if .ReturnNote}}<b>⚠️ Возврат</b>: {{.ReturnNote}}` + "\n" +
 		`{{end}}{{if .Photos}}<b>Фото</b>:{{range $i, $p := .Photos}} <a href="{{$p}}">📷{{addOne $i}}</a>{{end}}` + "\n" +
 		`{{end}}{{if .Answer}}<b>Ответ</b>: <pre>{{.Answer}}</pre>{{end}}`
 
 	tmpl := template.Must(template.New("review").
-		Funcs(template.FuncMap{"addOne": func(i int) int { return i + 1 }}).
+		Funcs(template.FuncMap{
+			"addOne": func(i int) int { return i + 1 },
+			"join":   func(s []string) string { return strings.Join(s, ", ") },
+		}).
 		Parse(reviewTemplate))
 
 	var sb strings.Builder
@@ -76,9 +189,15 @@ func (r Review) ToPrompt(description *string) string {
 	{{end}}{{if .Pros}}Достоинства: {{.Pros}}
 	{{end}}{{if .Cons}}Недостатки: {{.Cons}}
 	{{end}}{{if .Text}}Отзыв: {{.Text}}
+	{{end}}{{if .Bables}}Покупатель отметил: {{join .Bables}}
+	{{end}}{{if .SizeNote}}Соответствие размера: {{.SizeNote}}
+	{{end}}{{if .ReturnNote}}Статус возврата: {{.ReturnNote}}
+	{{end}}{{if .OrderedNote}}Дата заказа: {{.OrderedNote}}
 	{{end}}{{if .Answer}}Ответ: {{.Answer}}{{end}}`
 
-	tmpl := template.Must(template.New("review").Parse(promptTemplate))
+	tmpl := template.Must(template.New("review").
+		Funcs(template.FuncMap{"join": func(s []string) string { return strings.Join(s, ", ") }}).
+		Parse(promptTemplate))
 
 	var sb strings.Builder
 	err := tmpl.Execute(&sb, r)
@@ -90,48 +209,77 @@ func (r Review) ToPrompt(description *string) string {
 	return strings.TrimSpace(result)
 }
 
+// ToDB returns the persistence model. The content lives in Payload (jsonb);
+// only control-plane fields are separate columns.
 func (r Review) ToDB() *db.Review {
-	return &db.Review{
-		ID:           r.ID,
-		CabinetID:    r.CabinetID,
-		ExternalID:   r.ExternalID,
-		Text:         r.Text,
-		Pros:         r.Pros,
-		Cons:         r.Cons,
-		Valuation:    r.Valuation,
-		Answer:       r.Answer,
-		Article:      r.Article,
-		CreatedAt:    r.CreatedAt,
-		StatusID:     r.StatusID,
-		CustomerName: r.CustomerName,
-		Photos:       r.Photos,
-		ToOperator:   r.ToOperator,
-	}
+	out := r.Review
+	return &out
 }
 
 func NewReviewFromWB(in wbc.Feedback) Review {
-	r := db.Review{
-		ExternalID:   in.Id,
-		Article:      in.ProductDetails.SupplierArticle,
-		CustomerName: in.UserName,
+	p := ReviewPayload{
 		Text:         in.Text,
 		Pros:         in.Pros,
 		Cons:         in.Cons,
-		Valuation:    in.ProductValuation,
+		CustomerName: in.UserName,
+		Bables:       in.Bables,
+		MatchingSize: normalizeMatchingSize(in.MatchingSize),
+		ReturnStatus: returnStatusFromWB(in),
+		ProductName:  in.ProductDetails.ProductName,
+		SubjectName:  in.SubjectName,
+		Color:        in.Color,
 	}
 
-	if in.Bables != nil {
-		r.Text += "\nПокупатель отметил: " + strings.Join(in.Bables, ", ")
-	}
-
-	for _, p := range in.PhotoLinks {
-		if p.FullSize != "" {
-			r.Photos = append(r.Photos, p.FullSize)
+	for _, ph := range in.PhotoLinks {
+		if ph.FullSize != "" {
+			p.Photos = append(p.Photos, ph.FullSize)
 		}
 	}
+	if !in.LastOrderCreatedAt.IsZero() {
+		t := in.LastOrderCreatedAt
+		p.OrderedAt = &t
+	}
 
-	return Review{
-		Review: r,
+	payload, _ := json.Marshal(p)
+
+	r := Review{
+		Review: db.Review{
+			ExternalID: in.Id,
+			Article:    in.ProductDetails.SupplierArticle,
+			Valuation:  in.ProductValuation,
+			Payload:    payload,
+		},
+	}
+	r.decodePayload()
+	return r
+}
+
+// returnStatusFromWB derives a conservative return status from the WB feedback:
+// a processed return date wins ("returned"), otherwise an unavailable flag
+// means "unavailable", otherwise the return is still available.
+func returnStatusFromWB(in wbc.Feedback) string {
+	switch {
+	case !in.ReturnProductOrdersDate.IsZero():
+		return "returned"
+	case !in.IsAbleReturnProductOrders:
+		return "unavailable"
+	default:
+		return "available"
+	}
+}
+
+// normalizeMatchingSize maps WB's size-match token to a RU phrase; unknown
+// non-empty values pass through, "ok"/empty become "".
+func normalizeMatchingSize(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "ok", "true", "matched", "нормально", "соответствует":
+		return ""
+	case "smaller", "small", "malomer", "less", "маломерит":
+		return "маломерит"
+	case "bigger", "big", "bolshemer", "larger", "more", "большемерит":
+		return "большемерит"
+	default:
+		return s
 	}
 }
 

@@ -93,9 +93,7 @@ func (r Review) Validate() (errors map[string]string, valid bool) {
 		errors[Columns.Review.Article] = ErrMaxLength
 	}
 
-	if utf8.RuneCountInString(r.CustomerName) > 32 {
-		errors[Columns.Review.CustomerName] = ErrMaxLength
-	}
+	// customerName moved into the payload jsonb column; length check dropped.
 
 	return errors, len(errors) == 0
 }
