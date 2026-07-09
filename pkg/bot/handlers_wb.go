@@ -276,6 +276,15 @@ func (m *Manager) ProcessReviews(ctx context.Context) error {
 	return manager.ProcessPending(ctx, m.sendReview)
 }
 
+// displayName renders a Telegram user as @username, or "First Last" when there
+// is no username, or "" when nothing is available.
+func displayName(u models.User) string {
+	if u.Username != "" {
+		return "@" + u.Username
+	}
+	return strings.TrimSpace(u.FirstName + " " + u.LastName)
+}
+
 // reviewMarkup builds the review card keyboard (answer / edit / delete).
 func reviewMarkup(reviewID string) models.InlineKeyboardMarkup {
 	return models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
@@ -344,7 +353,9 @@ func (m *Manager) wbEditReview(ctx context.Context, bot *botlib.Bot, update *mod
 	reviewId := parts[1]
 	promptMsgID := update.CallbackQuery.Message.Message.ID
 
-	m.ReviewMap.Store(chatID, reviewEdit{reviewID: reviewId, promptMsgID: promptMsgID})
+	// Pending edit is keyed by the operator who pressed the button, so operators
+	// don't clobber each other and only this operator's next message counts.
+	m.ReviewMap.Store(chatUserID, reviewEdit{reviewID: reviewId, promptMsgID: promptMsgID})
 
 	user, err := m.tm.UserByChatID(ctx, chatUserID)
 	if err != nil {
@@ -363,10 +374,17 @@ func (m *Manager) wbEditReview(ctx context.Context, bot *botlib.Bot, update *mod
 		return
 	}
 
+	// Name the operator the bot is waiting for, so in a shared chat it is clear
+	// who should reply (a message from anyone else won't be picked up).
+	ask := "Отправь новый ответ"
+	if who := displayName(update.CallbackQuery.From); who != "" {
+		ask = who + ", отправь новый ответ"
+	}
+
 	// Show the current answer (copyable) so the operator can grab and tweak it.
-	text := "Отправь новый ответ"
+	text := ask
 	if review, err := m.tm.GetReviewByID(ctx, reviewId); err == nil && review != nil && review.Answer != "" {
-		text = "Текущий ответ (можно скопировать и поправить):\n<pre>" + review.Answer + "</pre>\n\nОтправь новый ответ"
+		text = "Текущий ответ (можно скопировать и поправить):\n<pre>" + review.Answer + "</pre>\n\n" + ask
 	}
 
 	// "Назад" aborts the edit and restores the review card so the current
@@ -405,7 +423,7 @@ func (m *Manager) wbCancelEditReview(ctx context.Context, bot *botlib.Bot, updat
 
 	// Drop the waiting state so the operator's next message is not captured as a
 	// new answer.
-	m.ReviewMap.Delete(chatID)
+	m.ReviewMap.Delete(chatUserID)
 	if user, err := m.tm.UserByChatID(ctx, chatUserID); err == nil && user != nil {
 		if _, err = m.tm.SetUserStatus(ctx, user, db.StatusEnabled); err != nil {
 			m.sl.Errorf("Ошибка обновления статуса: %v", err)
@@ -443,13 +461,13 @@ func (m *Manager) wbDeleteReview(ctx context.Context, bot *botlib.Bot, update *m
 	}
 }
 
-func (m *Manager) updateReview(ctx context.Context, bot *botlib.Bot, chatID int64, message *models.Message) {
+func (m *Manager) updateReview(ctx context.Context, bot *botlib.Bot, chatUserID, chatID int64, message *models.Message) {
 	var (
 		review *tradeplus.Review
 		err    error
 	)
 
-	if v, ok := m.ReviewMap.Load(chatID); ok {
+	if v, ok := m.ReviewMap.Load(chatUserID); ok {
 		edit, _ := v.(reviewEdit)
 
 		review, err = m.tm.GetReviewByID(ctx, edit.reviewID)
@@ -475,7 +493,7 @@ func (m *Manager) updateReview(ctx context.Context, bot *botlib.Bot, chatID int6
 		}
 	}
 
-	defer m.ReviewMap.Delete(chatID)
+	defer m.ReviewMap.Delete(chatUserID)
 
 	_, err = bot.DeleteMessage(ctx, &botlib.DeleteMessageParams{
 		ChatID:    chatID,

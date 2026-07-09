@@ -150,7 +150,7 @@ func (m *Manager) DefaultHandler(ctx context.Context, bot *botlib.Bot, update *m
 		}
 	case db.StatusWaitingReview:
 		{
-			m.updateReview(ctx, bot, chatID, update.Message)
+			m.updateReview(ctx, bot, chatUserID, chatID, update.Message)
 		}
 	default:
 		log.Println("Такого статуса пользователя нет")
