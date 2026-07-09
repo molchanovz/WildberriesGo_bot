@@ -31,6 +31,14 @@ const (
 	CallbackWbDeleteReview = "WB-DELETE-REVIEW"
 )
 
+// reviewEdit is stored in ReviewMap while the operator is typing a new answer.
+// It keeps the review being edited and the ID of the "Отправь новый ответ"
+// prompt message so it can be cleaned up once the new answer arrives.
+type reviewEdit struct {
+	reviewID    string
+	promptMsgID int
+}
+
 func wbHandler(ctx context.Context, bot *botlib.Bot, update *models.Update) {
 	chatID := update.CallbackQuery.From.ID
 	messageID := update.CallbackQuery.Message.Message.ID
@@ -332,8 +340,9 @@ func (m *Manager) wbEditReview(ctx context.Context, bot *botlib.Bot, update *mod
 	}
 
 	reviewId := parts[1]
+	promptMsgID := update.CallbackQuery.Message.Message.ID
 
-	m.ReviewMap.Store(chatID, reviewId)
+	m.ReviewMap.Store(chatID, reviewEdit{reviewID: reviewId, promptMsgID: promptMsgID})
 
 	user, err := m.tm.UserByChatID(ctx, chatUserID)
 	if err != nil {
@@ -352,10 +361,16 @@ func (m *Manager) wbEditReview(ctx context.Context, bot *botlib.Bot, update *mod
 		return
 	}
 
+	// Show the current answer (copyable) so the operator can grab and tweak it.
+	text := "Отправь новый ответ"
+	if review, err := m.tm.GetReviewByID(ctx, reviewId); err == nil && review != nil && review.Answer != "" {
+		text = "Текущий ответ (можно скопировать и поправить):\n<pre>" + review.Answer + "</pre>\n\nОтправь новый ответ"
+	}
+
 	_, err = bot.EditMessageText(ctx, &botlib.EditMessageTextParams{
-		MessageID: update.CallbackQuery.Message.Message.ID,
+		MessageID: promptMsgID,
 		ChatID:    chatID,
-		Text:      "Отправь новый ответ",
+		Text:      text,
 		ParseMode: models.ParseModeHTML,
 	})
 	if err != nil {
@@ -382,8 +397,10 @@ func (m *Manager) updateReview(ctx context.Context, bot *botlib.Bot, chatID int6
 		err    error
 	)
 
-	if reviewID, ok := m.ReviewMap.Load(chatID); ok {
-		review, err = m.tm.GetReviewByID(ctx, reviewID.(string))
+	if v, ok := m.ReviewMap.Load(chatID); ok {
+		edit, _ := v.(reviewEdit)
+
+		review, err = m.tm.GetReviewByID(ctx, edit.reviewID)
 		if err != nil {
 			return
 		}
@@ -392,6 +409,17 @@ func (m *Manager) updateReview(ctx context.Context, bot *botlib.Bot, chatID int6
 		if err != nil {
 			log.Println("Ошибка получения кабинета")
 			return
+		}
+
+		// Remove the "Отправь новый ответ" prompt now that the answer is in.
+		if edit.promptMsgID != 0 {
+			_, err = bot.DeleteMessage(ctx, &botlib.DeleteMessageParams{
+				ChatID:    chatID,
+				MessageID: edit.promptMsgID,
+			})
+			if err != nil {
+				log.Println("Ошибка удаления сообщения 'Отправь новый ответ': ", err)
+			}
 		}
 	}
 
