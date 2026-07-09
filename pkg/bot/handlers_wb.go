@@ -26,9 +26,10 @@ const (
 	CallbackWbStocksHandler  = "WB-STOCKS"
 	CallbackWbReturnsHandler = "WB-RETURNS"
 
-	CallbackWbAnswerReview = "WB-ANSWER-REVIEW"
-	CallbackWbEditReview   = "WB-EDIT-REVIEW"
-	CallbackWbDeleteReview = "WB-DELETE-REVIEW"
+	CallbackWbAnswerReview     = "WB-ANSWER-REVIEW"
+	CallbackWbEditReview       = "WB-EDIT-REVIEW"
+	CallbackWbCancelEditReview = "WB-CANCEL-EDIT-REVIEW"
+	CallbackWbDeleteReview     = "WB-DELETE-REVIEW"
 )
 
 // reviewEdit is stored in ReviewMap while the operator is typing a new answer.
@@ -275,25 +276,26 @@ func (m *Manager) ProcessReviews(ctx context.Context) error {
 	return manager.ProcessPending(ctx, m.sendReview)
 }
 
+// reviewMarkup builds the review card keyboard (answer / edit / delete).
+func reviewMarkup(reviewID string) models.InlineKeyboardMarkup {
+	return models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
+		{
+			{Text: "Ответить", CallbackData: fmt.Sprintf("%v_%v", CallbackWbAnswerReview, reviewID)},
+			{Text: "Редактировать", CallbackData: fmt.Sprintf("%v_%v", CallbackWbEditReview, reviewID)},
+		},
+		{
+			{Text: "Удалить", CallbackData: CallbackWbDeleteReview},
+		},
+	}}
+}
+
 func (m *Manager) sendReview(ctx context.Context, review tradeplus.Review) error {
-	reviewID := review.ExternalID
-
-	text := review.ToMessage()
-
-	var buttonsRow []models.InlineKeyboardButton
-	var allButtons [][]models.InlineKeyboardButton
-
-	buttonsRow = append(buttonsRow, models.InlineKeyboardButton{Text: "Ответить", CallbackData: fmt.Sprintf("%v_%v", CallbackWbAnswerReview, reviewID)})
-	buttonsRow = append(buttonsRow, models.InlineKeyboardButton{Text: "Редактировать", CallbackData: fmt.Sprintf("%v_%v", CallbackWbEditReview, reviewID)})
-	allButtons = append(allButtons, buttonsRow)
-	buttonsRow = []models.InlineKeyboardButton{}
-
-	buttonsRow = append(buttonsRow, models.InlineKeyboardButton{Text: "Удалить", CallbackData: CallbackWbDeleteReview})
-	allButtons = append(allButtons, buttonsRow)
-
-	markup := models.InlineKeyboardMarkup{InlineKeyboard: allButtons}
-
-	_, err := m.b.SendMessage(ctx, &botlib.SendMessageParams{ChatID: int64(m.reviewChatID), Text: text, ReplyMarkup: markup, ParseMode: models.ParseModeHTML})
+	_, err := m.b.SendMessage(ctx, &botlib.SendMessageParams{
+		ChatID:      int64(m.reviewChatID),
+		Text:        review.ToMessage(),
+		ReplyMarkup: reviewMarkup(review.ExternalID),
+		ParseMode:   models.ParseModeHTML,
+	})
 	if err != nil {
 		return fmt.Errorf("review#%d send failed: %v", review.ID, err)
 	}
@@ -367,14 +369,64 @@ func (m *Manager) wbEditReview(ctx context.Context, bot *botlib.Bot, update *mod
 		text = "Текущий ответ (можно скопировать и поправить):\n<pre>" + review.Answer + "</pre>\n\nОтправь новый ответ"
 	}
 
+	// "Назад" aborts the edit and restores the review card so the current
+	// answer can still be posted.
+	backMarkup := models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
+		{{Text: "Назад", CallbackData: fmt.Sprintf("%v_%v", CallbackWbCancelEditReview, reviewId)}},
+	}}
+
 	_, err = bot.EditMessageText(ctx, &botlib.EditMessageTextParams{
-		MessageID: promptMsgID,
-		ChatID:    chatID,
-		Text:      text,
-		ParseMode: models.ParseModeHTML,
+		MessageID:   promptMsgID,
+		ChatID:      chatID,
+		Text:        text,
+		ParseMode:   models.ParseModeHTML,
+		ReplyMarkup: backMarkup,
 	})
 	if err != nil {
 		log.Println("Ошибка отправки сообщения")
+		return
+	}
+}
+
+// wbCancelEditReview aborts an in-progress edit: it clears the waiting-for-answer
+// state and restores the original review card (with its answer/edit/delete
+// buttons) so the operator can still post the current answer.
+func (m *Manager) wbCancelEditReview(ctx context.Context, bot *botlib.Bot, update *models.Update) {
+	chatUserID := update.CallbackQuery.From.ID
+	chatID := update.CallbackQuery.Message.Message.Chat.ID
+	messageID := update.CallbackQuery.Message.Message.ID
+
+	parts := strings.Split(update.CallbackQuery.Data, "_")
+	if len(parts) != 2 {
+		log.Println("wbCancelEditReview неверное кол-во parts")
+		return
+	}
+	reviewId := parts[1]
+
+	// Drop the waiting state so the operator's next message is not captured as a
+	// new answer.
+	m.ReviewMap.Delete(chatID)
+	if user, err := m.tm.UserByChatID(ctx, chatUserID); err == nil && user != nil {
+		if _, err = m.tm.SetUserStatus(ctx, user, db.StatusEnabled); err != nil {
+			m.sl.Errorf("Ошибка обновления статуса: %v", err)
+		}
+	}
+
+	review, err := m.tm.GetReviewByID(ctx, reviewId)
+	if err != nil || review == nil {
+		m.sl.Errorf("wbCancelEditReview: не удалось получить отзыв %s: %v", reviewId, err)
+		return
+	}
+
+	_, err = bot.EditMessageText(ctx, &botlib.EditMessageTextParams{
+		MessageID:   messageID,
+		ChatID:      chatID,
+		Text:        review.ToMessage(),
+		ParseMode:   models.ParseModeHTML,
+		ReplyMarkup: reviewMarkup(reviewId),
+	})
+	if err != nil {
+		log.Println("wbCancelEditReview: ошибка восстановления карточки:", err)
 		return
 	}
 }
