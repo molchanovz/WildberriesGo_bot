@@ -87,7 +87,7 @@ func (c Client) stocksFbo() (string, error) {
 }
 
 func (c Client) getOrdersBySupplyID(supplyID string) (string, error) {
-	baseURL := "https://marketplace-api.wildberries.ru/api/v3/supplies/" + supplyID + "/orders"
+	baseURL := "https://marketplace-api.wildberries.ru/api/marketplace/v3/supplies/" + supplyID + "/order-ids"
 	body := []byte(``)
 
 	headers := map[string]string{
@@ -103,7 +103,6 @@ func (c Client) getOrdersBySupplyID(supplyID string) (string, error) {
 }
 
 func (c Client) getReturns(dateFrom, dateTo string) (string, error) {
-
 	params := url.Values{}
 	params.Add("dateFrom", dateFrom)
 	params.Add("dateTo", dateTo)
@@ -166,8 +165,8 @@ func (c Client) getCodesByOrderID(orderID int) (string, error) {
 	return response, nil
 }
 
-// Получения фбс заказов
-func (c Client) ordersFBS(daysAgo int) (string, error) {
+// GetOrdersFBS отдает фбс заказы
+func (c Client) GetOrdersFBS(dateFrom, dateTo int) (*OrdersListFBS, error) {
 	baseURL := "https://marketplace-api.wildberries.ru/api/v3/orders"
 	body := []byte(``)
 
@@ -175,19 +174,36 @@ func (c Client) ordersFBS(daysAgo int) (string, error) {
 		"Authorization": c.token,
 	}
 
-	params := map[string]string{
-		"limit":    "1000",
-		"next":     "0",
-		"dateFrom": strconv.Itoa(int(getUnix(time.Now().AddDate(0, 0, -(daysAgo + 1))))),
-		"dateTo":   strconv.Itoa(int(getUnix(time.Now().AddDate(0, 0, -daysAgo)))),
+	var all OrdersListFBS
+	next := 0
+	for {
+		params := map[string]string{
+			"limit":    "1000",
+			"next":     strconv.Itoa(next),
+			"dateFrom": strconv.Itoa(dateFrom),
+			"dateTo":   strconv.Itoa(dateTo),
+		}
+
+		_, response, err := c.get(baseURL, headers, params, body)
+		if err != nil {
+			return nil, err
+		}
+
+		var page OrdersListFBS
+		if err := json.Unmarshal([]byte(response), &page); err != nil {
+			return nil, err
+		}
+
+		all.OrdersFBS = append(all.OrdersFBS, page.OrdersFBS...)
+		all.Next = page.Next
+
+		if page.Next == 0 || len(page.OrdersFBS) == 0 {
+			break
+		}
+		next = page.Next
 	}
 
-	_, response, err := c.get(baseURL, headers, params, body)
-	if err != nil {
-		return "", err
-	}
-
-	return response, nil
+	return &all, nil
 }
 
 func (c Client) ordersFBSStatus(orderID int) (string, error) {
@@ -318,7 +334,44 @@ func (c Client) apiSalesAndReturns(daysAgo int) (string, error) {
 
 	return response, nil
 }
+
+// reviewPageSize is the WB feedbacks page size. Reviews() pages through all
+// unanswered feedbacks; reviewMaxFetch caps the total to avoid runaway loops.
+const (
+	reviewPageSize = 100
+	reviewMaxFetch = 10000
+)
+
+// Reviews returns ALL unanswered feedbacks, paging through the WB API.
+// The WB endpoint returns at most reviewPageSize per request, so a single
+// take=100/skip=0 call (the previous behaviour) only ever saw the first 100
+// reviews and never reached the rest.
 func (c Client) Reviews() (*Review, error) {
+	var result *Review
+
+	for skip := 0; skip < reviewMaxFetch; skip += reviewPageSize {
+		page, err := c.reviewsPage(skip, reviewPageSize)
+		if err != nil {
+			return nil, err
+		}
+
+		if result == nil {
+			result = page
+		} else {
+			result.Data.Feedbacks = append(result.Data.Feedbacks, page.Data.Feedbacks...)
+		}
+
+		// Last page reached once WB returns fewer than a full page.
+		if len(page.Data.Feedbacks) < reviewPageSize {
+			break
+		}
+	}
+
+	return result, nil
+}
+
+// reviewsPage fetches a single page of unanswered feedbacks.
+func (c Client) reviewsPage(skip, take int) (*Review, error) {
 	baseURL := "https://feedbacks-api.wildberries.ru/api/v1/feedbacks"
 
 	body := []byte(``)
@@ -329,8 +382,8 @@ func (c Client) Reviews() (*Review, error) {
 
 	params := map[string]string{
 		"isAnswered": "false",
-		"take":       "100",
-		"skip":       "0",
+		"take":       strconv.Itoa(take),
+		"skip":       strconv.Itoa(skip),
 	}
 
 	_, response, err := c.get(baseURL, headers, params, body)
@@ -375,19 +428,41 @@ func (c Client) AnswerReview(id, answer string) error {
 
 	params := map[string]string{}
 
-	status, _, err := c.post(baseURL, headers, params, body)
+	status, response, err := c.post(baseURL, headers, params, body)
 	if err != nil {
 		return fmt.Errorf("response get failed: %w", err)
 	}
 
-	if status != http.StatusNoContent {
-		return fmt.Errorf("status not OK: %s", status)
+	if status == http.StatusNoContent {
+		return nil
 	}
 
-	return nil
+	var errResp struct {
+		Title     string `json:"title"`
+		Detail    string `json:"detail"`
+		Code      string `json:"code"`
+		Error     bool   `json:"error"`
+		ErrorText string `json:"errorText"`
+	}
+	if jsonErr := json.Unmarshal([]byte(response), &errResp); jsonErr == nil {
+		if errResp.ErrorText != "" {
+			return fmt.Errorf("wb answer review failed (status %d): %s", status, errResp.ErrorText)
+		}
+		if errResp.Detail != "" {
+			return fmt.Errorf("wb answer review failed (status %d): %s", status, errResp.Detail)
+		}
+		if errResp.Title != "" {
+			return fmt.Errorf("wb answer review failed (status %d): %s", status, errResp.Title)
+		}
+	}
+
+	if response != "" {
+		return fmt.Errorf("wb answer review failed (status %d): %s", status, response)
+	}
+	return fmt.Errorf("wb answer review failed (status %d)", status)
 }
 
-func getUnix(date time.Time) int64 {
+func GetUnix(date time.Time) int64 {
 	nowStr := fmt.Sprint(date.Format("2006-01-02"), "T21:00:00")
 	t, _ := time.Parse("2006-01-02T15:04:05", nowStr)
 	return t.Unix()

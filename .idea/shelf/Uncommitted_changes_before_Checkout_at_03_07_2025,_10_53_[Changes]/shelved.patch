@@ -1,6 +1,0 @@
-diff --git a/db/db.go b/pkg/db/db.go
-rename from db/db.go
-rename to pkg/db/db.go
-diff --git a/db/model.go b/pkg/db/model.go
-rename from db/model.go
-rename to pkg/db/model.go

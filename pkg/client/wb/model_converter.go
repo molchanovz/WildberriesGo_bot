@@ -5,20 +5,20 @@ import (
 	"time"
 )
 
-func (c Client) GetOrdersFbs(supplyID string) ([]OrderWB, error) {
-	var orders Orders
+func (c Client) GetOrderIDsFbs(supplyID string) (OrderIDs, error) {
+	var orders OrderIDs
 	jsonString, err := c.getOrdersBySupplyID(supplyID)
 	if err != nil || jsonString == "" {
-		return nil, err
+		return orders, err
 	}
 
 	err = json.Unmarshal([]byte(jsonString), &orders)
 	if err != nil {
-		return nil, err
+		return orders, err
 	}
 
-	sortOrdersByArticle(orders.Orders)
-	return orders.Orders, nil
+	//sortOrdersByArticle(orders.Orders)
+	return orders, nil
 }
 func (c Client) GetCards(nmID *int, updatedAt *time.Time, limit *int) (*CardList, error) {
 	var cards CardList
@@ -70,17 +70,6 @@ func (c Client) GetAllOrders(daysAgo, flag int) (OrdersListALL, error) {
 
 	err = json.Unmarshal([]byte(jsonString), &posting)
 	return posting, err
-}
-
-func (c Client) GetOrdersFBS(daysAgo int) (*OrdersListFBS, error) {
-	var posting OrdersListFBS
-	jsonString, err := c.ordersFBS(daysAgo)
-	if err != nil || jsonString == "" {
-		return nil, err
-	}
-
-	err = json.Unmarshal([]byte(jsonString), &posting)
-	return &posting, err
 }
 
 func (c Client) GetSalesAndReturns(daysAgo int) (SalesReturns, error) {

@@ -13,10 +13,10 @@ LINT_VERSION := v2.1.6
 MAIN := ${NAME}/cmd/${NAME}
 
 tools:
-	#@go install github.com/vmkteam/mfd-generator@latest
+	@go install github.com/vmkteam/mfd-generator@latest
 	#@go install github.com/vmkteam/zenrpc/v2/zenrpc@latest
 	#@go install github.com/vmkteam/colgen/cmd/colgen@latest
-	@curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin ${LINT_VERSION}
+	#@curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin ${LINT_VERSION}
 
 fmt:
 	@golangci-lint fmt
@@ -55,12 +55,12 @@ db:
 	@psql -f docs/tradebot.sql tradebot
 	@psql -f docs/init.sql tradebot
 
-NS := ""
+NS := "tradebot"
 
-MAPPING := "tradebot:cabinets,orders,stocks,users,reviews"
+MAPPING := "tradebot:cabinets,orders,stocks,users,reviews,products"
 
 mfd-xml:
-	@mfd-generator xml -c "postgres://sergey:1719@localhost:5432/tradebot?sslmode=disable" -m ./docs/model/tradebot.mfd -n $(MAPPING)
+	@mfd-generator xml -c "postgres://sergey:1719@localhost:5432/tradebot?sslmode=disable" -m ./docs/model/tradebot.mfd -t=public.*
 mfd-model:
 	@mfd-generator model -m ./docs/model/tradebot.mfd -p db -o ./pkg/db
 mfd-repo: --check-ns

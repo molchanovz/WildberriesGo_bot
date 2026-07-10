@@ -2,11 +2,13 @@ package wb
 
 import (
 	"fmt"
-	"github.com/xuri/excelize/v2"
 	"time"
+	"unicode/utf8"
+
 	"tradebot/pkg/client/wb"
 	"tradebot/pkg/tradeplus"
-	"unicode/utf8"
+
+	"github.com/xuri/excelize/v2"
 )
 
 const StatusReadyForPickup = "Готов к выдаче"

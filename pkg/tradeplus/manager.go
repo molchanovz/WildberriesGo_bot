@@ -100,20 +100,22 @@ func (m Manager) GetPrintedOrders(ctx context.Context, id int) (map[string]struc
 }
 
 func (m Manager) CreateOrders(ctx context.Context, cabinetID int, newOrders ozon.PostingslistFbs) error {
-	for _, order := range newOrders.Result.PostingsFBS {
-		dbOrder := db.Order{
-			PostingNumber: order.PostingNumber,
-			CabinetID:     cabinetID,
-			Article:       order.Products[0].OfferID,
-			CreatedAt:     time.Now(),
-			StatusID:      db.StatusEnabled,
+	return m.db.RunInTransaction(ctx, func(tx *pg.Tx) error {
+		repo := m.repo.WithTransaction(tx)
+		for _, order := range newOrders.Result.PostingsFBS {
+			dbOrder := db.Order{
+				PostingNumber: order.PostingNumber,
+				CabinetID:     cabinetID,
+				Article:       order.Products[0].OfferID,
+				CreatedAt:     time.Now(),
+				StatusID:      db.StatusEnabled,
+			}
+			if _, err := repo.AddOrder(ctx, &dbOrder); err != nil {
+				return err
+			}
 		}
-		_, err := m.repo.AddOrder(ctx, &dbOrder)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func (m Manager) DeleteOrders(ctx context.Context) error {
@@ -130,9 +132,7 @@ func (m Manager) GetReviewByID(ctx context.Context, reviewID string) (*Review, e
 	return NewReview(review), err
 }
 
-func (m Manager) UpdateReviewAnswer(ctx context.Context, review *Review, newAnswer string) (*Review, error) {
-	review.Answer = newAnswer
-
+func (m Manager) UpdateReview(ctx context.Context, review *Review) (*Review, error) {
 	_, err := m.repo.UpdateReview(ctx, review.ToDB(), db.WithColumns(db.Columns.Review.Answer))
 	if err != nil {
 		return nil, err

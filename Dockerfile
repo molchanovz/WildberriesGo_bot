@@ -42,5 +42,6 @@ COPY pkg/client/google/credentials.json pkg/client/google/credentials.json
 COPY pkg/client/google/token.json pkg/client/google/token.json
 COPY assets/font.ttf assets/font.ttf
 COPY assets/barcodes assets/barcodes
+COPY assets/articles.json assets/articles.json
 
 CMD ["./main"]

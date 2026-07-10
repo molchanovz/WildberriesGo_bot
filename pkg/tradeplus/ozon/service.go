@@ -43,6 +43,6 @@ func (s Service) GetStocksManager() AnalyzeManager {
 	return NewAnalyzeManager(s.ClientID, s.Token, StocksDaysAgo)
 }
 
-func (s Service) GetStickersFBSManager(printedOrders map[string]struct{}) StickerManager {
-	return NewStickerManager(s.ClientID, s.Token, printedOrders)
+func (s Service) GetStickersFBSManager(printedOrders map[string]struct{}, warehouseID int64) StickerManager {
+	return NewStickerManager(s.ClientID, s.Token, printedOrders, warehouseID)
 }

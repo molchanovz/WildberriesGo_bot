@@ -3,13 +3,11 @@ package ozon
 import (
 	"context"
 	"testing"
-	"time"
 
 	"tradebot/pkg/db"
 
 	"github.com/BurntSushi/toml"
 	"github.com/go-pg/pg/v10"
-	"github.com/stretchr/testify/require"
 	"github.com/vmkteam/vfs"
 )
 
@@ -51,12 +49,4 @@ func TestMain(m *testing.M) {
 		return
 	}
 	m.Run()
-}
-
-func TestReturnsList(t *testing.T) {
-	since := time.Now().AddDate(0, 0, -2).Format("2006-01-02") + "T21:00:00.000Z"
-	to := time.Now().AddDate(0, 0, -1).Format("2006-01-02") + "T21:00:00.000Z"
-	got, err := ReturnsList(*cabinet.ClientID, cabinet.Key, 0, since, to)
-	require.NoError(t, err)
-	t.Log(got)
 }

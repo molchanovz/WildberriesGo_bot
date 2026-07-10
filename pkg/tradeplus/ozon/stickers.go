@@ -24,13 +24,15 @@ import (
 type StickerManager struct {
 	clientID, token string
 	printedOrders   map[string]struct{}
+	warehouseID     int64
 }
 
-func NewStickerManager(clientID, token string, printedOrders map[string]struct{}) StickerManager {
+func NewStickerManager(clientID, token string, printedOrders map[string]struct{}, warehouseID int64) StickerManager {
 	return StickerManager{
 		clientID:      clientID,
 		token:         token,
 		printedOrders: printedOrders,
+		warehouseID:   warehouseID,
 	}
 }
 
@@ -42,10 +44,15 @@ const (
 func (m StickerManager) GetAllLabels(progressChan chan tradeplus.Progress) ([]string, error) {
 	tradeplus.CreateDirectories()
 
+	log.Printf("ozonStickers: clientID=%s warehouse=%d GetAllLabels: start", m.clientID, m.warehouseID)
+
 	orderIds, err := m.getSortedFbsOrders()
 	if err != nil {
+		log.Printf("ozonStickers: clientID=%s warehouse=%d GetAllLabels: getSortedFbsOrders err=%v", m.clientID, m.warehouseID, err)
 		return []string{}, err
 	}
+
+	log.Printf("ozonStickers: clientID=%s warehouse=%d GetAllLabels: будет напечатано %d заказов", m.clientID, m.warehouseID, len(orderIds.Result.PostingsFBS))
 
 	readyPdfPath, err := m.getReadyPdf(orderIds, progressChan)
 	if err != nil {
@@ -58,22 +65,34 @@ func (m StickerManager) GetAllLabels(progressChan chan tradeplus.Progress) ([]st
 func (m StickerManager) GetNewLabels(progressChan chan tradeplus.Progress) ([]string, ozon.PostingslistFbs, error) {
 	tradeplus.CreateDirectories()
 
+	log.Printf("ozonStickers: clientID=%s warehouse=%d GetNewLabels: start printedOrders=%d", m.clientID, m.warehouseID, len(m.printedOrders))
+
 	orders, err := m.getSortedFbsOrders()
 	if err != nil {
+		log.Printf("ozonStickers: clientID=%s warehouse=%d GetNewLabels: getSortedFbsOrders err=%v", m.clientID, m.warehouseID, err)
 		return []string{}, ozon.PostingslistFbs{}, err
 	}
 
 	//Проверка, есть ли новые заказы
 	newOrders := ozon.PostingslistFbs{}
+	var skippedAsPrinted []string
 	for _, p := range orders.Result.PostingsFBS {
 		if _, ok := m.printedOrders[p.PostingNumber]; !ok {
 			newOrders.Result.PostingsFBS = append(newOrders.Result.PostingsFBS, p)
+		} else {
+			skippedAsPrinted = append(skippedAsPrinted, p.PostingNumber)
 		}
 	}
 
+	log.Printf("ozonStickers: clientID=%s warehouse=%d GetNewLabels: fetched=%d printedSkip=%d new=%d skippedSample=%v",
+		m.clientID, m.warehouseID, len(orders.Result.PostingsFBS), len(skippedAsPrinted), len(newOrders.Result.PostingsFBS), firstN(skippedAsPrinted, 5))
+
 	if len(newOrders.Result.PostingsFBS) == 0 {
+		log.Printf("ozonStickers: clientID=%s warehouse=%d GetNewLabels: ErrNoRows", m.clientID, m.warehouseID)
 		return []string{}, newOrders, ErrNoRows
 	}
+
+	log.Printf("ozonStickers: clientID=%s warehouse=%d GetNewLabels: будет напечатано %d новых заказов", m.clientID, m.warehouseID, len(newOrders.Result.PostingsFBS))
 
 	readyPdfPaths, err := m.getReadyPdf(newOrders, progressChan)
 	if err != nil {
@@ -81,6 +100,13 @@ func (m StickerManager) GetNewLabels(progressChan chan tradeplus.Progress) ([]st
 	}
 
 	return readyPdfPaths, newOrders, nil
+}
+
+func firstN(s []string, n int) []string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
 }
 
 func (m StickerManager) getReadyPdf(orderIds ozon.PostingslistFbs, progressChan chan tradeplus.Progress) ([]string, error) {
@@ -163,6 +189,8 @@ func (m StickerManager) getSortedFbsOrders() (ozon.PostingslistFbs, error) {
 	since := time.Now().AddDate(0, 0, -7).Format("2006-01-02T15:04:05.000Z")
 	to := time.Now().AddDate(0, 0, 1).Format("2006-01-02T15:04:05.000Z")
 
+	log.Printf("ozonStickers: clientID=%s warehouse=%d fetch awaiting_deliver since=%s to=%s", m.clientID, m.warehouseID, since, to)
+
 	// Обработка FBS заказов
 	var orders ozon.PostingslistFbs
 	offset := 0
@@ -170,8 +198,11 @@ func (m StickerManager) getSortedFbsOrders() (ozon.PostingslistFbs, error) {
 	for {
 		postingsListFbs, err := ozon.NewClient(m.clientID, m.token).PostingsListFbs(since, to, offset, "awaiting_deliver")
 		if err != nil {
+			log.Printf("ozonStickers: clientID=%s warehouse=%d PostingsListFbs offset=%d err=%v", m.clientID, m.warehouseID, offset, err)
 			return postingsListFbs, err
 		}
+
+		log.Printf("ozonStickers: clientID=%s warehouse=%d page offset=%d got=%d hasNext=%v", m.clientID, m.warehouseID, offset, len(postingsListFbs.Result.PostingsFBS), postingsListFbs.Result.HasNext)
 
 		orders.Result.PostingsFBS = append(orders.Result.PostingsFBS, postingsListFbs.Result.PostingsFBS...)
 
@@ -181,7 +212,26 @@ func (m StickerManager) getSortedFbsOrders() (ozon.PostingslistFbs, error) {
 		offset += len(postingsListFbs.Result.PostingsFBS)
 	}
 
+	whDist := map[int64]int{}
+	for _, p := range orders.Result.PostingsFBS {
+		whDist[p.DeliveryMethod.WarehouseID]++
+	}
+	log.Printf("ozonStickers: clientID=%s warehouse=%d fetched total=%d byWarehouse=%v", m.clientID, m.warehouseID, len(orders.Result.PostingsFBS), whDist)
+
+	if m.warehouseID != 0 {
+		before := len(orders.Result.PostingsFBS)
+		filtered := orders.Result.PostingsFBS[:0]
+		for _, p := range orders.Result.PostingsFBS {
+			if p.DeliveryMethod.WarehouseID == m.warehouseID {
+				filtered = append(filtered, p)
+			}
+		}
+		orders.Result.PostingsFBS = filtered
+		log.Printf("ozonStickers: clientID=%s warehouse=%d warehouse-filter before=%d after=%d", m.clientID, m.warehouseID, before, len(orders.Result.PostingsFBS))
+	}
+
 	if len(orders.Result.PostingsFBS) == 0 {
+		log.Printf("ozonStickers: clientID=%s warehouse=%d getSortedFbsOrders: ErrNoRows", m.clientID, m.warehouseID)
 		return orders, ErrNoRows
 	}
 
@@ -220,24 +270,35 @@ func combineLabelWithBarcode(ozonPdfPath, outputPath, article string) error {
 	pdf := gofpdf.New("P", "mm", "", "")
 	pdf.AddPageFormat("P", gofpdf.SizeType{Wd: 75, Ht: 120})
 
-	// Размеры изображения до поворота
-	origWidth := 58.0
-	origHeight := 40.0
-
-	// После поворота ширина/высота меняются местами
-	rotatedHeight := origWidth
-
-	// Центр страницы
 	pageWidth := 75.0
 
-	// Центр изображения после поворота
-	centerX := pageWidth / 2
-	centerY := 13 + rotatedHeight/2 // Сдвиг вверх
+	// Реальное соотношение сторон отрендеренной этикетки
+	bounds := img.Bounds()
+	srcAspect := float64(bounds.Dx()) / float64(bounds.Dy())
 
-	// Вставка и поворот изображения
+	// Доступная область под этикетку после поворота на 90°
+	// (визуальная ширина = imgH, визуальная высота = imgW)
+	const (
+		availW = 73.0
+		availH = 55.0
+		topY   = 5.0
+	)
+
+	var imgW, imgH float64
+	if availW*srcAspect <= availH {
+		imgH = availW
+		imgW = availW * srcAspect
+	} else {
+		imgW = availH
+		imgH = availH / srcAspect
+	}
+
+	centerX := pageWidth / 2
+	centerY := topY + imgW/2
+
 	pdf.TransformBegin()
 	pdf.TransformRotate(90, centerX, centerY)
-	pdf.ImageOptions(tmpImg, centerX-origHeight/2+2, 8, origHeight+10, origWidth+18, false,
+	pdf.ImageOptions(tmpImg, centerX-imgW/2, centerY-imgH/2, imgW, imgH, false,
 		gofpdf.ImageOptions{ImageType: "JPG"}, 0, "")
 	pdf.TransformEnd()
 

@@ -26,11 +26,19 @@ const (
 	CallbackWbStocksHandler  = "WB-STOCKS"
 	CallbackWbReturnsHandler = "WB-RETURNS"
 
-	CallbackWbAnswerReview = "WB-ANSWER-REVIEW"
-	CallbackWbRegenReview  = "WB-REGEN-REVIEW"
-	CallbackWbEditReview   = "WB-EDIT-REVIEW"
-	CallbackWbDeleteReview = "WB-DELETE-REVIEW"
+	CallbackWbAnswerReview     = "WB-ANSWER-REVIEW"
+	CallbackWbEditReview       = "WB-EDIT-REVIEW"
+	CallbackWbCancelEditReview = "WB-CANCEL-EDIT-REVIEW"
+	CallbackWbDeleteReview     = "WB-DELETE-REVIEW"
 )
+
+// reviewEdit is stored in ReviewMap while the operator is typing a new answer.
+// It keeps the review being edited and the ID of the "Отправь новый ответ"
+// prompt message so it can be cleaned up once the new answer arrives.
+type reviewEdit struct {
+	reviewID    string
+	promptMsgID int
+}
 
 func wbHandler(ctx context.Context, bot *botlib.Bot, update *models.Update) {
 	chatID := update.CallbackQuery.From.ID
@@ -179,7 +187,7 @@ func (m *Manager) wbStocksHandler(ctx context.Context, bot *botlib.Bot, update *
 
 	stocks, lostWarehouses, err := manager.GetStocks()
 	if err != nil {
-		_, err = SendTextMessage(ctx, bot, chatID, fmt.Sprintf("Ошибка при анализе остатков: %w", err))
+		_, err = SendTextMessage(ctx, bot, chatID, fmt.Sprintf("Ошибка при анализе остатков: %v", err))
 		if err != nil {
 			m.sl.Errorf("send msg failed: %v", err)
 			return
@@ -189,7 +197,7 @@ func (m *Manager) wbStocksHandler(ctx context.Context, bot *botlib.Bot, update *
 
 	filePath, err := generateExcelWB(orders, stocks, db.MarketWB)
 	if err != nil {
-		_, err = SendTextMessage(ctx, bot, chatID, fmt.Sprintf("Ошибка при генерации экселя: %w", err))
+		_, err = SendTextMessage(ctx, bot, chatID, fmt.Sprintf("Ошибка при генерации экселя: %v", err))
 		if err != nil {
 			m.sl.Errorf("send msg failed: %v", err)
 			return
@@ -228,7 +236,7 @@ func (m *Manager) returnsHandler(ctx context.Context, bot *botlib.Bot, update *m
 
 	filePath, err := wb.NewReturnsManager(cabinets[0].Key).WriteReturns()
 	if err != nil {
-		_, err = SendTextMessage(ctx, bot, chatID, fmt.Sprintf("Ошибка при анализе остатков: %w", err))
+		_, err = SendTextMessage(ctx, bot, chatID, fmt.Sprintf("Ошибка при анализе остатков: %v", err))
 		if err != nil {
 			m.sl.Errorf("send msg failed: %v", err)
 			return
@@ -245,53 +253,60 @@ func (m *Manager) returnsHandler(ctx context.Context, bot *botlib.Bot, update *m
 	}
 }
 
-func (m *Manager) SendNewReviews(ctx context.Context) error {
+// FetchReviews (cron A) pulls unanswered reviews from WB into the DB as Created.
+func (m *Manager) FetchReviews(ctx context.Context) error {
 	cabinets, err := m.tm.GetCabinetsByMp(ctx, db.MarketWB)
 	if err != nil {
 		return fmt.Errorf("%w", err)
 	}
 
 	manager := wb.NewReviewManager(m.dbc, &cabinets[0], m.chatgpt)
+	return manager.Fetch(ctx)
+}
 
-	newReviews, err := manager.Reviews(ctx)
+// ProcessReviews (cron B) generates answers for Created reviews and routes them:
+// positives are auto-posted to WB, problems go to the operator in Telegram.
+func (m *Manager) ProcessReviews(ctx context.Context) error {
+	cabinets, err := m.tm.GetCabinetsByMp(ctx, db.MarketWB)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w", err)
 	}
-	for i := range newReviews {
-		err = m.sendReview(ctx, newReviews[i])
-		if err != nil {
-			m.sl.Errorf("message send failed: %v", err)
-			continue
-		}
+
+	manager := wb.NewReviewManager(m.dbc, &cabinets[0], m.chatgpt)
+	return manager.ProcessPending(ctx, m.sendReview)
+}
+
+// displayName renders a Telegram user as @username, or "First Last" when there
+// is no username, or "" when nothing is available.
+func displayName(u models.User) string {
+	if u.Username != "" {
+		return "@" + u.Username
 	}
-	return nil
+	return strings.TrimSpace(u.FirstName + " " + u.LastName)
+}
+
+// reviewMarkup builds the review card keyboard (answer / edit / delete).
+func reviewMarkup(reviewID string) models.InlineKeyboardMarkup {
+	return models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
+		{
+			{Text: "Ответить", CallbackData: fmt.Sprintf("%v_%v", CallbackWbAnswerReview, reviewID)},
+			{Text: "Редактировать", CallbackData: fmt.Sprintf("%v_%v", CallbackWbEditReview, reviewID)},
+		},
+		{
+			{Text: "Удалить", CallbackData: CallbackWbDeleteReview},
+		},
+	}}
 }
 
 func (m *Manager) sendReview(ctx context.Context, review tradeplus.Review) error {
-	reviewID := review.ExternalID
-
-	text := review.ToMessage()
-
-	var buttonsRow []models.InlineKeyboardButton
-	var allButtons [][]models.InlineKeyboardButton
-
-	buttonsRow = append(buttonsRow, models.InlineKeyboardButton{Text: "Ответить", CallbackData: fmt.Sprintf("%v_%v", CallbackWbAnswerReview, reviewID)})
-	buttonsRow = append(buttonsRow, models.InlineKeyboardButton{Text: "Редактировать", CallbackData: fmt.Sprintf("%v_%v", CallbackWbEditReview, reviewID)})
-	allButtons = append(allButtons, buttonsRow)
-	buttonsRow = []models.InlineKeyboardButton{}
-
-	buttonsRow = append(buttonsRow, models.InlineKeyboardButton{Text: "Перегенерировать ответ", CallbackData: fmt.Sprintf("%v_%v", CallbackWbRegenReview, reviewID)})
-	allButtons = append(allButtons, buttonsRow)
-	buttonsRow = []models.InlineKeyboardButton{}
-
-	buttonsRow = append(buttonsRow, models.InlineKeyboardButton{Text: "Удалить", CallbackData: CallbackWbDeleteReview})
-	allButtons = append(allButtons, buttonsRow)
-
-	markup := models.InlineKeyboardMarkup{InlineKeyboard: allButtons}
-
-	_, err := m.b.SendMessage(ctx, &botlib.SendMessageParams{ChatID: int64(m.myChatID), Text: text, ReplyMarkup: markup, ParseMode: models.ParseModeHTML})
+	_, err := m.b.SendMessage(ctx, &botlib.SendMessageParams{
+		ChatID:      int64(m.reviewChatID),
+		Text:        review.ToMessage(),
+		ReplyMarkup: reviewMarkup(review.ExternalID),
+		ParseMode:   models.ParseModeHTML,
+	})
 	if err != nil {
-		return fmt.Errorf("review#%w send failed: %w", review.ID, err)
+		return fmt.Errorf("review#%d send failed: %v", review.ID, err)
 	}
 	return nil
 }
@@ -317,66 +332,16 @@ func (m *Manager) wbAnswerReview(ctx context.Context, bot *botlib.Bot, update *m
 	err = manager.AnswerReview(ctx, reviewId)
 	if err != nil {
 		m.sl.Errorf("%v", err)
+		_, _ = bot.AnswerCallbackQuery(ctx, &botlib.AnswerCallbackQueryParams{Text: err.Error(), ShowAlert: true, CallbackQueryID: update.CallbackQuery.ID})
 		return
 	}
 
 	m.wbDeleteReview(ctx, bot, update)
 }
 
-func (m *Manager) wbRegenReview(ctx context.Context, bot *botlib.Bot, update *models.Update) {
-	parts := strings.Split(update.CallbackQuery.Data, "_")
-	chatID := update.CallbackQuery.Message.Message.Chat.ID
-	message := update.CallbackQuery.Message.Message
-
-	if len(parts) != 2 {
-		m.sl.Error(ctx, "wbAnswerReview неверное кол-во parts")
-		return
-	}
-
-	reviewId := parts[1]
-
-	review, err := m.tm.GetReviewByID(ctx, reviewId)
-	if err != nil {
-		return
-	}
-
-	request := wb.Prompt + review.ToPrompt()
-	answer, err := m.chatgpt.Chatgpt.Send(ctx, request)
-	if err != nil {
-		log.Println("Ошибка получения нового ответа на отзыв")
-		return
-	}
-
-	review, err = m.tm.UpdateReviewAnswer(ctx, review, answer)
-	if err != nil {
-		log.Println("Ошибка обновления ответа")
-		return
-	}
-
-	_, err = bot.DeleteMessage(ctx, &botlib.DeleteMessageParams{
-		ChatID:    chatID,
-		MessageID: message.ID,
-	})
-	if err != nil {
-		log.Println("Ошибка удаления сообщения с API: ", err)
-		return
-	}
-
-	if review == nil {
-		m.sl.Error(ctx, "review is null")
-		return
-	}
-
-	fmt.Println("новый ответ: ", review.Answer)
-
-	err = m.sendReview(ctx, *review)
-	if err != nil {
-		return
-	}
-}
-
 func (m *Manager) wbEditReview(ctx context.Context, bot *botlib.Bot, update *models.Update) {
-	chatID := update.CallbackQuery.From.ID
+	chatUserID := update.CallbackQuery.From.ID
+	chatID := update.CallbackQuery.Message.Message.Chat.ID
 
 	parts := strings.Split(update.CallbackQuery.Data, "_")
 
@@ -386,10 +351,13 @@ func (m *Manager) wbEditReview(ctx context.Context, bot *botlib.Bot, update *mod
 	}
 
 	reviewId := parts[1]
+	promptMsgID := update.CallbackQuery.Message.Message.ID
 
-	m.ReviewMap.Store(chatID, reviewId)
+	// Pending edit is keyed by the operator who pressed the button, so operators
+	// don't clobber each other and only this operator's next message counts.
+	m.ReviewMap.Store(chatUserID, reviewEdit{reviewID: reviewId, promptMsgID: promptMsgID})
 
-	user, err := m.tm.UserByChatID(ctx, chatID)
+	user, err := m.tm.UserByChatID(ctx, chatUserID)
 	if err != nil {
 		log.Println("Ошибка получения User")
 		return
@@ -406,14 +374,77 @@ func (m *Manager) wbEditReview(ctx context.Context, bot *botlib.Bot, update *mod
 		return
 	}
 
+	// Name the operator the bot is waiting for, so in a shared chat it is clear
+	// who should reply (a message from anyone else won't be picked up).
+	ask := "Отправь новый ответ"
+	if who := displayName(update.CallbackQuery.From); who != "" {
+		ask = who + ", отправь новый ответ"
+	}
+
+	// Show the current answer (copyable) so the operator can grab and tweak it.
+	text := ask
+	if review, err := m.tm.GetReviewByID(ctx, reviewId); err == nil && review != nil && review.Answer != "" {
+		text = "Текущий ответ (можно скопировать и поправить):\n<pre>" + review.Answer + "</pre>\n\n" + ask
+	}
+
+	// "Назад" aborts the edit and restores the review card so the current
+	// answer can still be posted.
+	backMarkup := models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
+		{{Text: "Назад", CallbackData: fmt.Sprintf("%v_%v", CallbackWbCancelEditReview, reviewId)}},
+	}}
+
 	_, err = bot.EditMessageText(ctx, &botlib.EditMessageTextParams{
-		MessageID: update.CallbackQuery.Message.Message.ID,
-		ChatID:    chatID,
-		Text:      "Отправь новый ответ",
-		ParseMode: models.ParseModeHTML,
+		MessageID:   promptMsgID,
+		ChatID:      chatID,
+		Text:        text,
+		ParseMode:   models.ParseModeHTML,
+		ReplyMarkup: backMarkup,
 	})
 	if err != nil {
 		log.Println("Ошибка отправки сообщения")
+		return
+	}
+}
+
+// wbCancelEditReview aborts an in-progress edit: it clears the waiting-for-answer
+// state and restores the original review card (with its answer/edit/delete
+// buttons) so the operator can still post the current answer.
+func (m *Manager) wbCancelEditReview(ctx context.Context, bot *botlib.Bot, update *models.Update) {
+	chatUserID := update.CallbackQuery.From.ID
+	chatID := update.CallbackQuery.Message.Message.Chat.ID
+	messageID := update.CallbackQuery.Message.Message.ID
+
+	parts := strings.Split(update.CallbackQuery.Data, "_")
+	if len(parts) != 2 {
+		log.Println("wbCancelEditReview неверное кол-во parts")
+		return
+	}
+	reviewId := parts[1]
+
+	// Drop the waiting state so the operator's next message is not captured as a
+	// new answer.
+	m.ReviewMap.Delete(chatUserID)
+	if user, err := m.tm.UserByChatID(ctx, chatUserID); err == nil && user != nil {
+		if _, err = m.tm.SetUserStatus(ctx, user, db.StatusEnabled); err != nil {
+			m.sl.Errorf("Ошибка обновления статуса: %v", err)
+		}
+	}
+
+	review, err := m.tm.GetReviewByID(ctx, reviewId)
+	if err != nil || review == nil {
+		m.sl.Errorf("wbCancelEditReview: не удалось получить отзыв %s: %v", reviewId, err)
+		return
+	}
+
+	_, err = bot.EditMessageText(ctx, &botlib.EditMessageTextParams{
+		MessageID:   messageID,
+		ChatID:      chatID,
+		Text:        review.ToMessage(),
+		ParseMode:   models.ParseModeHTML,
+		ReplyMarkup: reviewMarkup(reviewId),
+	})
+	if err != nil {
+		log.Println("wbCancelEditReview: ошибка восстановления карточки:", err)
 		return
 	}
 }
@@ -430,25 +461,39 @@ func (m *Manager) wbDeleteReview(ctx context.Context, bot *botlib.Bot, update *m
 	}
 }
 
-func (m *Manager) updateReview(ctx context.Context, bot *botlib.Bot, chatID int64, message *models.Message) {
+func (m *Manager) updateReview(ctx context.Context, bot *botlib.Bot, chatUserID, chatID int64, message *models.Message) {
 	var (
 		review *tradeplus.Review
 		err    error
 	)
 
-	if reviewID, ok := m.ReviewMap.Load(chatID); ok {
-		review, err = m.tm.GetReviewByID(ctx, reviewID.(string))
+	if v, ok := m.ReviewMap.Load(chatUserID); ok {
+		edit, _ := v.(reviewEdit)
+
+		review, err = m.tm.GetReviewByID(ctx, edit.reviewID)
 		if err != nil {
 			return
 		}
-		review, err = m.tm.UpdateReviewAnswer(ctx, review, message.Text)
+		review.Answer = message.Text
+		review, err = m.tm.UpdateReview(ctx, review)
 		if err != nil {
 			log.Println("Ошибка получения кабинета")
 			return
 		}
+
+		// Remove the "Отправь новый ответ" prompt now that the answer is in.
+		if edit.promptMsgID != 0 {
+			_, err = bot.DeleteMessage(ctx, &botlib.DeleteMessageParams{
+				ChatID:    chatID,
+				MessageID: edit.promptMsgID,
+			})
+			if err != nil {
+				log.Println("Ошибка удаления сообщения 'Отправь новый ответ': ", err)
+			}
+		}
 	}
 
-	defer m.ReviewMap.Delete(chatID)
+	defer m.ReviewMap.Delete(chatUserID)
 
 	_, err = bot.DeleteMessage(ctx, &botlib.DeleteMessageParams{
 		ChatID:    chatID,
@@ -530,7 +575,7 @@ func (m *Manager) AnalyzeStocks(apiKey string, ctx context.Context, b *botlib.Bo
 	//	if newStocks.stockFBO == 0 && *stocks[0].CountFbo != 0 {
 	//		// Отправляем уведомление
 	//		_, err = b.SendMessage(ctx, &botlib.SendMessageParams{
-	//			ChatID:    m.myChatID,
+	//			ChatID:    m.reviewChatID,
 	//			Text:      fmt.Sprintf("На складе <b>WB</b> закончились <code>%v</code>. Проверьте FBS", article),
 	//			ParseMode: models.ParseModeHTML,
 	//		})

@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 	"time"
-	"tradebot/pkg/tradeplus/test"
 
 	"tradebot/pkg/db"
+	"tradebot/pkg/tradeplus/test"
 
 	"github.com/BurntSushi/toml"
 	"github.com/go-pg/pg/v10"

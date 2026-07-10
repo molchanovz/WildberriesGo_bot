@@ -21,12 +21,13 @@ import (
 )
 
 const (
-	CallbackOzonHandler              = "OZON"
-	CallbackOzonStocksHandler        = "OZON-STOCKS_"
-	CallbackOzonStickersHandler      = "OZON-STICKERS_"
-	CallbackOzonPrintStickersHandler = "OZON-PRINT-STICKERS_"
-	CallbackOzonCabinetsHandler      = "OZON-CABINETS"
-	CallbackSelectOzonCabinetHandler = "CABINET-OZON_"
+	CallbackOzonHandler                = "OZON"
+	CallbackOzonStocksHandler          = "OZON-STOCKS_"
+	CallbackOzonStickersHandler        = "OZON-STICKERS_"
+	CallbackOzonSelectWarehouseHandler = "OZON-WAREHOUSE_"
+	CallbackOzonPrintStickersHandler   = "OZON-PRINT-STICKERS_"
+	CallbackOzonCabinetsHandler        = "OZON-CABINETS"
+	CallbackSelectOzonCabinetHandler   = "CABINET-OZON_"
 )
 
 func (m *Manager) ozonHandler(ctx context.Context, bot *botlib.Bot, update *models.Update) {
@@ -169,29 +170,81 @@ func (m *Manager) ozonStocksHandler(ctx context.Context, bot *botlib.Bot, update
 	os.Remove(filePath)
 }
 
-// ozonStickersHandler создает клавиатуру кнопок для печати FBS стикеров
+// ozonStickersHandler показывает список складов для выбора перед печатью FBS стикеров
 func (m *Manager) ozonStickersHandler(ctx context.Context, bot *botlib.Bot, update *models.Update) {
 	chatID := update.CallbackQuery.From.ID
+	messageID := update.CallbackQuery.Message.Message.ID
 
+	parts := strings.Split(update.CallbackQuery.Data, "_")
+	cabinetID, err := strconv.Atoi(parts[1])
+	if err != nil {
+		log.Println("Ошибка конвертации:", err)
+		return
+	}
+
+	cabinet, err := m.tm.GetCabinetByID(ctx, cabinetID)
+	if err != nil {
+		log.Println("Ошибка получения кабинета:", err)
+		return
+	}
+
+	clientID := ""
+	if cabinet.ClientID != nil {
+		clientID = *cabinet.ClientID
+	}
+
+	warehouses, err := ozonClient.NewClient(clientID, cabinet.Key).Warehouses("")
+	if err != nil {
+		log.Println("Ошибка получения складов:", err)
+		return
+	}
+
+	text := "Выберите склад"
+	var allButtons [][]models.InlineKeyboardButton
+	for _, w := range warehouses.Warehouses {
+		if w.Status != "created" { // skip hasn't created warehouses
+			continue
+		}
+
+		row := []models.InlineKeyboardButton{
+			{Text: w.Name, CallbackData: fmt.Sprintf("%v%v_%v", CallbackOzonSelectWarehouseHandler, parts[1], w.WarehouseID)},
+		}
+		allButtons = append(allButtons, row)
+	}
+	allButtons = append(allButtons, []models.InlineKeyboardButton{
+		{Text: "Назад", CallbackData: fmt.Sprintf("%v%v", CallbackSelectOzonCabinetHandler, parts[1])},
+	})
+
+	markup := models.InlineKeyboardMarkup{InlineKeyboard: allButtons}
+	_, err = bot.EditMessageText(ctx, &botlib.EditMessageTextParams{ChatID: chatID, MessageID: messageID, Text: text, ReplyMarkup: markup})
+	if err != nil {
+		log.Printf("%v", err)
+	}
+}
+
+// ozonWarehouseStickersHandler показывает выбор типа стикеров для выбранного склада
+func (m *Manager) ozonWarehouseStickersHandler(ctx context.Context, bot *botlib.Bot, update *models.Update) {
+	chatID := update.CallbackQuery.From.ID
 	messageID := update.CallbackQuery.Message.Message.ID
 
 	parts := strings.Split(update.CallbackQuery.Data, "_")
 	cabinetID := parts[1]
+	warehouseID := parts[2]
 
 	text := "Печать FBS стикеров. Выберите, какие стикеры распечатать"
 
-	var buttonsRow, buttonBack []models.InlineKeyboardButton
-	buttonsRow = append(buttonsRow, models.InlineKeyboardButton{Text: "Новые", CallbackData: fmt.Sprintf("%v%v_%v", CallbackOzonPrintStickersHandler, cabinetID, ozon.NewLabels)})
-	buttonsRow = append(buttonsRow, models.InlineKeyboardButton{Text: "Все из сборки", CallbackData: fmt.Sprintf("%v%v_%v", CallbackOzonPrintStickersHandler, cabinetID, ozon.AllLabels)})
-	buttonBack = append(buttonBack, models.InlineKeyboardButton{Text: "Назад", CallbackData: fmt.Sprintf("%v%v", CallbackSelectOzonCabinetHandler, cabinetID)})
+	buttonsRow := []models.InlineKeyboardButton{
+		{Text: "Новые", CallbackData: fmt.Sprintf("%v%v_%v_%v", CallbackOzonPrintStickersHandler, cabinetID, warehouseID, ozon.NewLabels)},
+		{Text: "Все из сборки", CallbackData: fmt.Sprintf("%v%v_%v_%v", CallbackOzonPrintStickersHandler, cabinetID, warehouseID, ozon.AllLabels)},
+	}
+	buttonBack := []models.InlineKeyboardButton{
+		{Text: "Назад", CallbackData: fmt.Sprintf("%v%v", CallbackOzonStickersHandler, cabinetID)},
+	}
 
-	allButtons := [][]models.InlineKeyboardButton{buttonsRow, buttonBack}
-	markup := models.InlineKeyboardMarkup{InlineKeyboard: allButtons}
-
+	markup := models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{buttonsRow, buttonBack}}
 	_, err := bot.EditMessageText(ctx, &botlib.EditMessageTextParams{ChatID: chatID, MessageID: messageID, Text: text, ReplyMarkup: markup})
 	if err != nil {
 		log.Printf("%v", err)
-		return
 	}
 }
 
@@ -206,7 +259,13 @@ func (m *Manager) ozonPrintStickers(ctx context.Context, bot *botlib.Bot, update
 		return
 	}
 
-	flag := parts[2]
+	warehouseID, err := strconv.ParseInt(parts[2], 10, 64)
+	if err != nil {
+		log.Println("Ошибка конвертации warehouseID:", err)
+		return
+	}
+
+	flag := parts[3]
 
 	cabinet, err := m.tm.GetCabinetByID(ctx, cabinetID)
 	if err != nil {
@@ -217,8 +276,16 @@ func (m *Manager) ozonPrintStickers(ctx context.Context, bot *botlib.Bot, update
 	newOrders := ozonClient.PostingslistFbs{}
 
 	printedOrdersMap, err := m.tm.GetPrintedOrders(ctx, cabinet.ID)
+	if err != nil {
+		log.Println("Ошибка получения списка напечатанных заказов:", err)
+		_, sendErr := SendTextMessage(ctx, bot, chatID, fmt.Sprintf("ошибка получения списка напечатанных заказов: %v", err))
+		if sendErr != nil {
+			log.Println(sendErr)
+		}
+		return
+	}
 
-	manager := ozon.NewService(cabinet).GetStickersFBSManager(printedOrdersMap)
+	manager := ozon.NewService(cabinet).GetStickersFBSManager(printedOrdersMap, warehouseID)
 
 	var filePaths []string
 	done := make(chan []string)

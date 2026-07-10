@@ -475,6 +475,59 @@ type StocksNew struct {
 	} `json:"items"`
 }
 
+type WarehouseList struct {
+	Cursor     string `json:"cursor"`
+	HasNext    bool   `json:"has_next"`
+	Warehouses []struct {
+		AddressInfo struct {
+			Address   string  `json:"address"`
+			Latitude  float64 `json:"latitude"`
+			Longitude float64 `json:"longitude"`
+			Utc       string  `json:"utc"`
+		} `json:"address_info"`
+		CarriageLabelType string   `json:"carriage_label_type"`
+		CourierComment    string   `json:"courier_comment"`
+		CourierPhones     []string `json:"courier_phones"`
+		CreatedAt         string   `json:"created_at"`
+		FirstMile         struct {
+			Type                string `json:"type"`
+			DropoffPointID      string `json:"dropoff_point_id"`
+			TimeslotFrom        string `json:"timeslot_from"`
+			TimeslotID          int64  `json:"timeslot_id"`
+			TimeslotTo          string `json:"timeslot_to"`
+			FirstMileIsChanging bool   `json:"first_mile_is_changing"`
+		} `json:"first_mile"`
+		HasEntrustedAcceptance bool   `json:"has_entrusted_acceptance"`
+		HasPostingsLimit       bool   `json:"has_postings_limit"`
+		IsAutoAssembly         bool   `json:"is_auto_assembly"`
+		IsKgt                  bool   `json:"is_kgt"`
+		IsRfbs                 bool   `json:"is_rfbs"`
+		IsWaybillEnabled       bool   `json:"is_waybill_enabled"`
+		MinPostingsLimit       int    `json:"min_postings_limit"`
+		IsComfort              bool   `json:"is_comfort"`
+		IsExpress              bool   `json:"is_express"`
+		WarehouseType          string `json:"warehouse_type"`
+		CutInTime              int    `json:"cut_in_time"`
+		Name                   string `json:"name"`
+		Phone                  string `json:"phone"`
+		PostingsLimit          int    `json:"postings_limit"`
+		SlaCutIn               int    `json:"sla_cut_in"`
+		Status                 string `json:"status"`
+		Timetable              struct {
+			TimetableFrom string `json:"timetable_from"`
+			TimetableTo   string `json:"timetable_to"`
+			WorkingHours  []struct {
+				TimeFrom string `json:"time_from"`
+				TimeTo   string `json:"time_to"`
+			} `json:"working_hours"`
+		} `json:"timetable"`
+		UpdatedAt    string   `json:"updated_at"`
+		WarehouseID  int      `json:"warehouse_id"`
+		WithItemList bool     `json:"with_item_list"`
+		WorkingDays  []string `json:"working_days"`
+	} `json:"warehouses"`
+}
+
 type ProductList struct {
 	Result struct {
 		Items []struct {

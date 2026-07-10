@@ -1,11 +1,12 @@
 package test
 
 import (
+	"tradebot/pkg/db"
+
 	"github.com/BurntSushi/toml"
 	"github.com/go-pg/pg/v10"
 	"github.com/vmkteam/cron"
 	"github.com/vmkteam/vfs"
-	"tradebot/pkg/db"
 )
 
 var (
@@ -34,7 +35,8 @@ type Config struct {
 		YandexWriter   cron.Schedule
 		WBWriter       cron.Schedule
 		OrderCleaner   cron.Schedule
-		SendNewReviews cron.Schedule
+		FetchReviews   cron.Schedule
+		ProcessReviews cron.Schedule
 	}
 	VFS vfs.Config
 }
