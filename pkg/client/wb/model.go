@@ -273,6 +273,7 @@ type Feedback struct {
 	SupplierProductValuation        int         `json:"supplierProductValuation"`
 	IsAbleReturnProductOrders       bool        `json:"isAbleReturnProductOrders"`
 	ReturnProductOrdersDate         time.Time   `json:"returnProductOrdersDate"`
+	OrderStatus                     string      `json:"orderStatus"` // buyout/rejected/returned/notSpecified
 	Bables                          []string    `json:"bables"`
 	LastOrderShkId                  int         `json:"lastOrderShkId"`
 	LastOrderCreatedAt              time.Time   `json:"lastOrderCreatedAt"`

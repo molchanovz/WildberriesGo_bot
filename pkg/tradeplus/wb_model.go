@@ -23,6 +23,7 @@ type ReviewPayload struct {
 	Bables       []string   `json:"bables,omitempty"`
 	MatchingSize string     `json:"matchingSize,omitempty"` // normalized RU: "маломерит"/"большемерит"/""
 	ReturnStatus string     `json:"returnStatus,omitempty"` // "available"/"returned"/"unavailable"/""
+	OrderStatus  string     `json:"orderStatus,omitempty"`  // WB orderStatus: buyout/rejected/returned/notSpecified
 	OrderedAt    *time.Time `json:"orderedAt,omitempty"`
 	ProductName  string     `json:"productName,omitempty"`
 	SubjectName  string     `json:"subjectName,omitempty"`
@@ -43,6 +44,7 @@ type Review struct {
 	Bables       []string
 	MatchingSize string
 	ReturnStatus string
+	OrderStatus  string
 	OrderedAt    time.Time
 	ProductName  string
 	SubjectName  string
@@ -77,6 +79,7 @@ func (r *Review) decodePayload() {
 	r.Bables = p.Bables
 	r.MatchingSize = p.MatchingSize
 	r.ReturnStatus = p.ReturnStatus
+	r.OrderStatus = p.OrderStatus
 	r.ProductName = p.ProductName
 	r.SubjectName = p.SubjectName
 	r.Color = p.Color
@@ -94,6 +97,38 @@ func (r Review) ReturnNote() string {
 		return "покупатель уже оформил возврат по этому заказу"
 	case "unavailable":
 		return "возврат по этому заказу недоступен"
+	default:
+		return ""
+	}
+}
+
+// OrderStatusNote renders WB's orderStatus as a human phrase so the model knows
+// what actually happened with the order and never offers a return that no longer
+// applies (empty for buyout / notSpecified / unknown — nothing worth surfacing).
+func (r Review) OrderStatusNote() string {
+	switch r.OrderStatus {
+	case "rejected":
+		return "покупатель отказался от заказа (не выкупил)"
+	case "returned":
+		return "покупатель оформил возврат по этому заказу"
+	default:
+		return ""
+	}
+}
+
+// OrderStatusLabel renders every meaningful WB orderStatus for the operator card
+// (unlike OrderStatusNote, which stays minimal for the model and hides non-actionable
+// states). Empty only for an unknown/absent status.
+func (r Review) OrderStatusLabel() string {
+	switch r.OrderStatus {
+	case "buyout":
+		return "выкуплен"
+	case "rejected":
+		return "отказ (не выкупил)"
+	case "returned":
+		return "возврат"
+	case "notSpecified":
+		return "статус не присвоен"
 	default:
 		return ""
 	}
@@ -159,6 +194,7 @@ func (r Review) ToMessage() string {
 		`{{end}}{{if .Bables}}<b>Отметил</b>: {{join .Bables}}` + "\n" +
 		`{{end}}{{if .SizeNote}}<b>Размер</b>: {{.SizeNote}}` + "\n" +
 		`{{end}}{{if .ReturnNote}}<b>⚠️ Возврат</b>: {{.ReturnNote}}` + "\n" +
+		`{{end}}{{if .OrderStatusLabel}}<b>📦 Заказ</b>: {{.OrderStatusLabel}}` + "\n" +
 		`{{end}}{{if .Photos}}<b>Фото</b>:{{range $i, $p := .Photos}} <a href="{{$p}}">📷{{addOne $i}}</a>{{end}}` + "\n" +
 		`{{end}}{{if .Answer}}<b>Ответ</b>: <pre>{{.Answer}}</pre>{{end}}`
 
@@ -192,6 +228,7 @@ func (r Review) ToPrompt(description *string) string {
 	{{end}}{{if .Bables}}Покупатель отметил: {{join .Bables}}
 	{{end}}{{if .SizeNote}}Соответствие размера: {{.SizeNote}}
 	{{end}}{{if .ReturnNote}}Статус возврата: {{.ReturnNote}}
+	{{end}}{{if .OrderStatusNote}}Статус заказа: {{.OrderStatusNote}}
 	{{end}}{{if .OrderedNote}}Дата заказа: {{.OrderedNote}}
 	{{end}}{{if .Answer}}Ответ: {{.Answer}}{{end}}`
 
@@ -224,7 +261,7 @@ func NewReviewFromWB(in wbc.Feedback) Review {
 		CustomerName: in.UserName,
 		Bables:       in.Bables,
 		MatchingSize: normalizeMatchingSize(in.MatchingSize),
-		ReturnStatus: returnStatusFromWB(in),
+		OrderStatus:  in.OrderStatus,
 		ProductName:  in.ProductDetails.ProductName,
 		SubjectName:  in.SubjectName,
 		Color:        in.Color,
